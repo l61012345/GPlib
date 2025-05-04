@@ -9,20 +9,23 @@ from functools import partial
 import warnings
 import GPFunction
 import GPmemorize
+import GPutilities
 
 class GPRegressor(BaseEstimator, RegressorMixin):
     def __init__(self, pop_size=100, gen_num=20,constant_range = None,
-                 primitive_module=None, genetic_operator_pipline=None, fitness_function=None,fitness_weight= -1,init_mintree_height=1,init_maxtree_height=3,
+                 primitive_module=None, terminal_constants=None,genetic_operator_pipline=None, fitness_function=None,fitness_weight= -1,init_mintree_height=1,init_maxtree_height=3,
                  parsimony=0, seed=None,value_log = None,hof_size=1,elitism=False):
         '''
         popsize: int, size of the population
         gen_num: int, number of generations
         primitive_module: module, user-defined primitiveset which should be created in another .py file and imported.
+        terminal_constants: list of constant in Terminal set, e.g, [np.pi,1,2,3,4]
         genetic_operator_pipline: class module, user defined pipline of genetic operations, including selection, reproduction, crossover and mutation
         fitness function: function
         parsimony: float, panelty of size
         seed
         constant_range: None or 2 ele list, e.g., [-1,1] for epheral constant
+        value_log: a dict used during evaluation for memorize subtrees result, use shared_log = GPmemorize.get_shared_log() to create one.
         fitness_weight: the weight of fitness, usually -1 (min is best) or 1 (max is best)
         init_mintree_height: the tree min height in initial population
         init_maxtree_height: the tree max height in initial population
@@ -30,6 +33,7 @@ class GPRegressor(BaseEstimator, RegressorMixin):
         self.pop_size = pop_size
         self.gen_num = gen_num
         self.primitive_module = primitive_module
+        self.terminal_constants = terminal_constants
         self.genetic_operator_pipline = genetic_operator_pipline
         self.fitness_function = fitness_function
         self.parsimony = parsimony
@@ -69,13 +73,15 @@ class GPRegressor(BaseEstimator, RegressorMixin):
         if self.primitive_module:
             func_dict = self._load_module_functions(self.primitive_module)
         else:
+            # 如果用户没有自定义PrimitiveSet那么就用GPFunction.py中定义的函数作为Primitve
             func_dict  = self._load_module_functions(GPFunction)
         for name, func in func_dict.items():
             arity = func.__code__.co_argcount # PrimitiveFunction的声明数量
             self.pset.addPrimitive(func, arity, name=name)
-
-        # 添加常数
-        if constant_range == None:
+        if self.terminal_constants is not None: # 添加固定常数
+            for _ in range(len(self.terminal_constants)):
+                self.pset.addTerminal(_)
+        if constant_range is None: # 添加随机常数
             pass
         # 检查constant_range是否合规：两个元素的列表，且第一个元素小于第二个元素
         elif len(constant_range) == 2:
