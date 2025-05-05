@@ -61,6 +61,8 @@ class GPRegressor(BaseEstimator, RegressorMixin):
         self.verbose = verbose
         self.n_jobs = n_jobs
 
+        if pset is None:
+            raise ValueError("pset is empty, you must have one.")
         # 没有value_log的时候提醒创建一个，不然无法加速
         if value_log is None:
             warnings.warn(
@@ -94,30 +96,30 @@ class GPRegressor(BaseEstimator, RegressorMixin):
         self.toolbox.register("individual", tools.initIterate, creator.Individual, self.toolbox.expr)
         self.toolbox.register("population", tools.initRepeat, list, self.toolbox.individual)
 
+    def eval_func(self,ind,X,y):
+        try:
+            # 计算树在X上的输出
+            pred = GPmemorize.compute_tree(
+                ind, pset=self.pset, x=X, shared_log=self.value_log
+            )
+            if callable(self.fitness_function):
+                loss = self.fitness_function(pred, y)
+            # 使用自定义的fitness function进行衡量
+            elif isinstance(self.fitness_function):
+                loss = self.fitness_function(pred, y)
+            else:
+                # 用户没有定义的话就默认用MSE函数
+                loss = np.mean((pred - y) ** 2)
+                print('using MSE')
+            return (loss + self.parsimony * len(ind) * self.fitness_weight,)
+        except:
+            return (float("inf"),)
+
     def fit(self, X, y):
         X = np.array(X)
         y = np.array(y)
         self._setup_gp()
-        def eval_func(ind,X,y):
-            try:
-                # 计算树在X上的输出
-                pred = GPmemorize.compute_tree(
-                    ind, pset=self.pset, x=X, shared_log=self.value_log
-                )
-                if callable(self.fitness_function):
-                    loss = self.fitness_function(pred, y)
-                # 使用自定义的fitness function进行衡量
-                elif isinstance(self.fitness_function):
-                    loss = self.fitness_function(pred, y)
-                else:
-                    # 用户没有定义的话就默认用MSE函数
-                    loss = np.mean((pred - y) ** 2)
-                    print('using MSE')
-                return (loss + self.parsimony * len(ind) * self.fitness_weight,)
-            except:
-                return (float("inf"),)
-
-        parallel_eval = partial(eval_func, X=X, y=y)
+        parallel_eval = partial(self.eval_func, X=X, y=y)
         self.toolbox.register("evaluate", parallel_eval)
         pop = self.toolbox.population(n=self.pop_size)
         hof = tools.HallOfFame(self.hof_size)
@@ -176,14 +178,14 @@ class GPRegressor(BaseEstimator, RegressorMixin):
                     # 点突变
                     for i in range(len(offspring)):
                         if np.random.rand() < 0.2:
-                            (offspring[i],) = gp.mutNodeReplacement(offspring[i])
+                            (offspring[i],) = gp.mutNodeReplacement(offspring[i],self.pset)
                             del offspring[i].fitness.values
                 else:
                     offspring = self.genetic_operator_pipline(pset=self.pset).apply(pop)
 
                 # 重新衡量结构有改动的个体
                 invalids = [ind for ind in offspring if not ind.fitness.valid]
-                fitnesses = list(tqdm(pool.imap(parallel_eval, invalids),total=len(invalids),desc=f"Generation {g+1}"))
+                fitnesses = list(tqdm(pool.imap(parallel_eval, invalids),total=len(invalids),desc=f"Generation {g}"))
                 for ind, fit in zip(invalids, fitnesses):
                     ind.fitness.values = fit
                 # 精英
