@@ -12,7 +12,6 @@ class GeneticOperationPipeline:
         self.toolbox.register("expr_mut", gp.genFull, min_=2, max_=4)
         self.toolbox.register("mutate", gp.mutUniform, expr=self.toolbox.expr_mut, pset=self.pset)
         self.toolbox.register("point_mutate", gp.mutNodeReplacement, pset=self.pset)
-        
         self.toolbox.decorate("mate", gp.staticLimit(key=len, max_value=250))
         self.toolbox.decorate("mutate", gp.staticLimit(key=len, max_value=250))
 

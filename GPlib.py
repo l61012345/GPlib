@@ -18,7 +18,7 @@ class GPRegressor(BaseEstimator, RegressorMixin):
         genetic_operator_pipline=None,
         fitness_function=None,
         fitness_weight=-1,        
-        parsimony=0,
+        parsimony=0.000,
         value_log=None,
         init_mintree_height=1,
         init_maxtree_height=3,
@@ -68,14 +68,17 @@ class GPRegressor(BaseEstimator, RegressorMixin):
             warnings.warn(
                 "No value_log, use shared_log = GPmemorize.get_shared_log() to create one",
                 UserWarning)
+            time.sleep(1)
         if fitness_function is None:
             warnings.warn(
                 "No Custom defined fitness function,use MSE instead", UserWarning)
+            time.sleep(1)
             fitness_weight = (-1)  # 默认使用MSE作为fitness function的时候，fitness越小越好
         if genetic_operator_pipline is None:
             warnings.warn(
                 "No Custom defined Genetic Operations,use default: 3 Tournament, 0.9 std crossover, and 0.2 NodeReplace mutation instead",
                 UserWarning)
+            time.sleep(1)
 
     def _setup_gp(self):
         if self.seed is not None:
@@ -103,16 +106,14 @@ class GPRegressor(BaseEstimator, RegressorMixin):
                 ind, pset=self.pset, x=X, shared_log=self.value_log
             )
             if callable(self.fitness_function):
-                loss = self.fitness_function(pred, y)
-            # 使用自定义的fitness function进行衡量
-            elif isinstance(self.fitness_function):
-                loss = self.fitness_function(pred, y)
+                loss = self.fitness_function(pred, y) # 使用自定义的fitness function进行衡量
             else:
                 # 用户没有定义的话就默认用MSE函数
                 loss = np.mean((pred - y) ** 2)
-                print('using MSE')
             return (loss + self.parsimony * len(ind) * self.fitness_weight,)
-        except:
+        except Exception as e:
+            print(ind)
+            raise e
             return (float("inf"),)
 
     def fit(self, X, y):
@@ -177,7 +178,7 @@ class GPRegressor(BaseEstimator, RegressorMixin):
                             del offspring[i - 1].fitness.values, offspring[i].fitness.values
                     # 点突变
                     for i in range(len(offspring)):
-                        if np.random.rand() < 0.2:
+                        if np.random.rand() < 0.1:
                             (offspring[i],) = gp.mutNodeReplacement(offspring[i],self.pset)
                             del offspring[i].fitness.values
                 else:
@@ -185,7 +186,7 @@ class GPRegressor(BaseEstimator, RegressorMixin):
 
                 # 重新衡量结构有改动的个体
                 invalids = [ind for ind in offspring if not ind.fitness.valid]
-                fitnesses = list(tqdm(pool.imap(parallel_eval, invalids),total=len(invalids),desc=f"Generation {g}"))
+                fitnesses = pool.map(parallel_eval, invalids)
                 for ind, fit in zip(invalids, fitnesses):
                     ind.fitness.values = fit
                 # 精英
@@ -213,7 +214,12 @@ class GPRegressor(BaseEstimator, RegressorMixin):
                     )
                     print("------------------------------")
                     print(logbook.stream)
-
+                # 清理日志的机制
+                if g%2==0:
+                    self.value_log = GPmemorize.clean_log(self.value_log,10000)
+                    
+        pool.close()
+        pool.join()
         self._best_ind = hof[0]
         self._best_ind_fitness = float(self._best_ind.fitness.values[0])
         self._compiled_func = gp.compile(expr=self._best_ind, pset=self.pset)

@@ -4,6 +4,8 @@ import multiprocessing
 import heapq
 import numpy as np
 from deap import gp
+import hashlib
+from multiprocessing import Lock
 
 # 将 Manager 和 shared_log 创建放到主进程
 def get_shared_log(manager=None):
@@ -14,6 +16,9 @@ def get_shared_log(manager=None):
         get_shared_log.shared_log = get_shared_log._manager.dict()
     return get_shared_log.shared_log
 
+def safe_hash(expr_str):
+    return hashlib.md5(expr_str.encode()).hexdigest()
+
 def log_decorator(shared_log, expr_str):
     """
     装饰器：包装原语函数，记录函数名称、输入、输出以及形状信息。
@@ -21,6 +26,7 @@ def log_decorator(shared_log, expr_str):
     - shared_log: 共享日志列表
     - expr_str: 当前调用的表达式字符串（例如 "add(ARG0, ARG1)")
     """
+    lock = Lock()
     def decorator(func):
         def wrapper(*args, **kwargs):
             # 记录输入的形状和数值（部分）
@@ -29,23 +35,32 @@ def log_decorator(shared_log, expr_str):
             else:
                 input_values = tuple(np.concatenate(args,axis=0))
             # 生成哈希键，唯一标识一个计算
-            key = (expr_str, input_values)
+            key = safe_hash(str(expr_str))
             # 检查共享日志
-            if key in shared_log:
-                shared_log[key]["count"] += 1
-                return shared_log[key]["output_value"]  # 直接返回已计算结果
-            else:
-                # 调用原函数
-                result = func(*args, **kwargs)
-                shared_log[key] = {
-                    "function": expr_str,
-                    "input_values": input_values,
-                    "output_value": result,
-                    "count": 1,
-                }
+            with lock:
+                if shared_log.get(key) is not None:
+                    shared_log[key]["count"] += 1
+                    return shared_log[key]["output_value"]  # 直接返回已计算结果
+                else:
+                    # 调用原函数
+                    result = func(*args, **kwargs)
+                    shared_log[key] = {
+                        "function": expr_str,
+                        "input_values": input_values,
+                        "output_value": result,
+                        "count": 1,
+                    }
                 return result
         return wrapper
     return decorator
+
+def clean_log(shared_log, max_size=50000):
+    if len(shared_log) > max_size:
+        sorted_items = sorted(shared_log.items(), key=lambda x: x[1]["count"])
+        for k, _ in sorted_items[:len(shared_log) - max_size]:
+            del shared_log[k]
+    return shared_log
+
 
 def compute_tree(expr, pset,x,prefix="ARG",overflow_inf = True,shared_log=None):
     # 初始化栈，用于递归计算每个节点
