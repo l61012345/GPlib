@@ -1,7 +1,7 @@
 from deap import gp,base,tools
 import random
 class GeneticOperationPipeline:
-    def __init__(self, pset,mate_rate=0.9, mut_rate=0.2, point_muta_rate=0.1):
+    def __init__(self, pset,mate_rate=0.9, mut_rate=0.08, point_muta_rate=0.01):
         self.toolbox = base.Toolbox()
         self.mate_rate = mate_rate
         self.mut_rate = mut_rate

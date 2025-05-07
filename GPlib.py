@@ -84,20 +84,15 @@ class GPRegressor(BaseEstimator, RegressorMixin):
                 UserWarning)
             time.sleep(1)
 
-    def clear_cache(self, cache_dir="gp_cache"):
+    def exist_cache(self, cache_dir="gp_cache"):
         """
-        检查缓存文件夹是否存在，若存在则清空缓存。
+        检查缓存文件夹是否存在
         """
         if os.path.exists(cache_dir):
             warnings.warn('Cache already existsm,try to clean')
-            try:
-                shutil.rmtree(cache_dir)  # 清空缓存目录
-                warnings.warn('Cleaned Successully')
-            except:
-                warnings.warn('FailedClean Cache')
 
     def _setup_gp(self):
-        self.clear_cache()  # 清理缓存
+        self.exist_cache()  # 检查缓存
         if self.seed is not None:
             np.random.seed(self.seed)
         # 创建fitness
@@ -243,7 +238,8 @@ class GPRegressor(BaseEstimator, RegressorMixin):
                     print(logbook.stream)
                 # 清理日志的机制
                 if g%2==0:
-                    self.value_log = GPmemorize.clean_log(self.value_log,100)
+                    if self.value_log is not None:
+                        self.value_log = GPmemorize.clean_log(self.value_log,100)
                     
         pool.close()
         pool.join()

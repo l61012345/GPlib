@@ -9,21 +9,16 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_squared_error,r2_score,mean_absolute_error,root_mean_squared_error
 import multiprocessing
 
+random.seed(10)
+np.random.seed(10)
+
+x1 = np.linspace(-5, 5, 100)
+x2 = np.linspace(-5, 5, 100)
+X1, X2 = np.meshgrid(x1, x2)
+# 将网格展平成一个 (10000, 2) 的点集
+X = np.column_stack([X1.ravel(), X2.ravel()])
+y = X[:, 0] ** 2 + np.sin(X[:, 1])
 current_time = datetime.now().strftime("%Y%m%d_%H%M%S") # local time for log
-decimal.getcontext().prec = 90 # decimal precision
-
-
-# load the dataset
-# Read csv files
-data = pd.read_csv("selout_data_winter.csv")
-
-# Extract the input and output data
-# Output is at the col named 'Generation_mean'
-feature_columns = [col for col in data.columns if (col != 'Generation')]
-x = np.array(data[feature_columns].values)
-y = np.array(data['Generation'].values)
-
-x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=0.2, random_state=np.random.randint(10000)) # rand_state is same with SOTA
 
 # Protective Div
 def protected_div(left, right):
@@ -39,7 +34,7 @@ def protected_div(left, right):
 
 # primitiveset
 global main_set
-main_set = gp.PrimitiveSet("MAIN", x.shape[1])  # the number of variables are the size of x
+main_set = gp.PrimitiveSet("MAIN", X.shape[1])  # the number of variables are the size of x
 main_set.addPrimitive(np.add, 2)
 main_set.addPrimitive(np.subtract, 2)
 main_set.addPrimitive(np.multiply, 2)
@@ -47,9 +42,9 @@ main_set.addPrimitive(np.sin, 1)
 main_set.addPrimitive(np.cos, 1)
 main_set.addPrimitive(np.tan,1)
 #main_set.addPrimitive(np.min,1)
-main_set.addTerminal(np.pi)
+#main_set.addTerminal(np.pi)
 main_set.addPrimitive(protected_div, 2, name="div")
-main_set.addEphemeralConstant("rand0", partial(random.uniform, -1, 1))
+#main_set.addEphemeralConstant("rand0", partial(random.uniform, -1, 1))
 
 # Create individual
 # Creates the attribute fitness of an individual, the base class is Fitness
@@ -64,7 +59,7 @@ toolbox.register("individual", tools.initIterate, creator.Individual, toolbox.ex
 toolbox.register("population", tools.initRepeat, list, toolbox.individual)
 toolbox.register("compile", gp.compile, pset=main_set)
 
-def evalSymbReg(individual,x_train,y_train, parsimony = 0.01):
+def evalSymbReg(individual,x_train,y_train, parsimony = 0):
     try:
         func = gp.compile(expr=individual,pset=main_set)
         #y_pred = np.array([func(*x) for x in x_train])
@@ -80,7 +75,7 @@ def evalSymbReg(individual,x_train,y_train, parsimony = 0.01):
         return float("Inf"),
 
 # Evolmethod:evalSymbReg
-toolbox.register("evaluate_source", evalSymbReg,x_train=x_train,y_train=y_train,parsimony = 0.01)
+toolbox.register("evaluate_source", evalSymbReg,x_train=X,y_train=y,parsimony = 0)
 toolbox.register("select", tools.selTournament, tournsize=60)
 # Genetic Operator
 toolbox.register("mate", gp.cxOnePoint)
@@ -100,7 +95,7 @@ toolbox.decorate("mutate", gp.staticLimit(key=len, max_value=250))
 # toolbox.decorate("shrink_mutate", gp.staticLimit(operator.attrgetter('height'), max_value=20))
 
 # source task
-def source_task(pop_size = 30000, hof_size = 5, mate_rate = 0.9, muta_rate = 0.08,point_muta_rate=0.01, shrink_muta_rate = 0.01, gen_num = 50):
+def source_task(pop_size = 300, hof_size = 5, mate_rate = 0.9, muta_rate = 0.08,point_muta_rate=0.01, shrink_muta_rate = 0.01, gen_num = 20):
     global current_time
     best_ind_fitness = 0
     # initialize the population
@@ -213,80 +208,11 @@ def source_task(pop_size = 30000, hof_size = 5, mate_rate = 0.9, muta_rate = 0.0
 
 if __name__ == "__main__":
     # Multi processors
-    run_num = 10 # numbers for run the algorithms
-    model_list = []
-    train_rmse_list = []
-    test_rmse_list = []
-    train_mae_list = []
-    test_mae_list = []
-    train_r2_list = []
-    test_r2_list = []
+    run_num = 1 # numbers for run the algorithms
 
     for _ in range(run_num):
         pool = multiprocessing.Pool()
         toolbox.register("map", pool.map)
-        hof,pop,best_ind,best_ind_fitness = source_task(gen_num=50)
+        hof,pop,best_ind,best_ind_fitness = source_task(gen_num=20)
         toolbox.unregister('map')
-        model_list.append(str(best_ind))
-        func = gp.compile(expr=best_ind, pset=main_set)
-        train_pred =func(*x_train.T)
-        test_pred = func(*x_test.T)
-        # RMSE
-        train_rmse = np.sqrt(mean_squared_error(y_train, train_pred))
-        test_rmse = np.sqrt(mean_squared_error(y_test, test_pred))
-        # MAE
-        train_mae = mean_absolute_error(y_train, train_pred)
-        test_mae = mean_absolute_error(y_test, test_pred)
-        # R²
-        train_r2 = r2_score(y_train, train_pred)
-        test_r2 = r2_score(y_test, test_pred)
-
-        train_rmse_list.append(best_ind_fitness)
-        test_rmse_list.append(test_rmse)
-        train_mae_list.append(train_mae)
-        test_mae_list.append(test_mae)
-        train_r2_list.append(train_r2)
-        test_r2_list.append(test_r2)
-        print('Train RMSE:',train_rmse)
-        print('Test RMSE:',test_rmse)
-        print('Train MAE',train_mae)
-        print('Test MAE',test_mae)
-        print('===Overall===')
-        print(
-            "train_rmse", np.mean(train_rmse_list),
-            "test_rmse", np.mean(test_rmse_list),
-            "train MAE", np.mean(train_mae_list),
-            "test MAV",np.mean(test_mae_list),
-            "train_r2", np.mean(train_r2_list),
-            "test_r2", np.mean(test_r2_list))
-        # save the informations
-        trees_text_filename = f'logbook_{current_time}_entiretest.txt'
-        with open(trees_text_filename, 'w') as file:
-            file.write("model list \n")
-            for i in model_list:
-                file.write(f"{i}")
-                file.write("\n")
-            file.write(f"avg:train_mae{np.mean(train_mae_list)}")
-            file.write("\n")
-            file.write(str(train_mae_list))
-            file.write("\n")
-            file.write(f"avg:test_mae{np.mean(test_mae_list)}")
-            file.write("\n")
-            file.write(str(test_mae_list))
-            file.write("\n")
-            file.write(f"avg:train_rmse{np.mean(train_rmse_list)}")
-            file.write("\n")
-            file.write(str(train_rmse_list))
-            file.write("\n")
-            file.write(f"avg:test_rmse{np.mean(test_rmse_list)}")
-            file.write("\n")
-            file.write(str(test_rmse_list))
-            file.write("\n")
-            file.write(f"avg:train_r2{np.mean(train_r2_list)}")
-            file.write("\n")
-            file.write(str(train_r2_list))
-            file.write("\n")
-            file.write(f"avg:test_r2{np.mean(test_r2_list)}")
-            file.write("\n")
-            file.write(str(test_r2_list))
-            file.write("\n")
+        
