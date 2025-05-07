@@ -6,7 +6,10 @@ import numpy as np
 from deap import gp
 import hashlib
 from multiprocessing import Lock
-
+from joblib import Memory
+import os
+memory = Memory(location=os.path.join(os.getcwd(), "gp_cache"), verbose=0)
+lock = Lock()
 # 将 Manager 和 shared_log 创建放到主进程
 def get_shared_log(manager=None):
     if manager is None:
@@ -19,38 +22,30 @@ def get_shared_log(manager=None):
 def safe_hash(expr_str):
     return hashlib.md5(expr_str.encode()).hexdigest()
 
-def log_decorator(shared_log, expr_str):
+def log_decorator(shared_log,expr_str):
     """
-    装饰器：包装原语函数，记录函数名称、输入、输出以及形状信息。
-    参数:
-    - shared_log: 共享日志列表
-    - expr_str: 当前调用的表达式字符串（例如 "add(ARG0, ARG1)")
+    包装函数：缓存输出并统计表达式调用次数（不缓存中间值结构）。
+    - expr_str: 当前表达式（如 "add(ARG0, ARG1)"）
+    - shared_counter: multiprocessing.Manager().dict() 类型，记录每个 expr_str 的调用次数
     """
-    lock = Lock()
     def decorator(func):
+        # joblib 缓存计算
+        @memory.cache
+        def cached_func(*args):
+            return func(*args)
         def wrapper(*args, **kwargs):
-            # 记录输入的形状和数值（部分）
-            if isinstance(args, (int, float)):
-                input_values = tuple(args)
-            else:
-                input_values = tuple(np.concatenate(args,axis=0))
-            # 生成哈希键，唯一标识一个计算
-            key = safe_hash(str(expr_str))
-            # 检查共享日志
-            with lock:
-                if shared_log.get(key) is not None:
-                    shared_log[key]["count"] += 1
-                    return shared_log[key]["output_value"]  # 直接返回已计算结果
-                else:
-                    # 调用原函数
-                    result = func(*args, **kwargs)
-                    shared_log[key] = {
-                        "function": expr_str,
-                        "input_values": input_values,
-                        "output_value": result,
-                        "count": 1,
-                    }
-                return result
+            # 更新调用计数器（可选）
+            if shared_log is not None:
+                with lock:
+                    if shared_log.get(expr_str) is not None:
+                        shared_log[expr_str]["count"] += 1
+                    else:
+                        shared_log[expr_str] = {
+                            "function": expr_str,
+                            "count": 1,
+                        }
+            # 调用缓存函数
+            return cached_func(*args)
         return wrapper
     return decorator
 
@@ -112,6 +107,9 @@ def compute_tree(expr, pset,x,prefix="ARG",overflow_inf = True,shared_log=None):
             stack[-1][2].append(expr_str)  # 记录子表达式
     # 最终返回树的计算结果
     return result
+
+
+
 
 def find_top_subtree_in_log(topn:int,pset:gp.PrimitiveSet,shared_log:dict,key_name:str,largest = True, verbose = 1):
     '''

@@ -8,6 +8,10 @@ import GPutilities
 import multiprocessing
 from functools import partial
 from tqdm import tqdm
+from joblib import Parallel, delayed
+import threading
+import os
+import shutil
 
 class GPRegressor(BaseEstimator, RegressorMixin):
     def __init__(
@@ -80,7 +84,19 @@ class GPRegressor(BaseEstimator, RegressorMixin):
                 UserWarning)
             time.sleep(1)
 
+    def clear_cache(self, cache_dir="gp_cache"):
+        """
+        检查缓存文件夹是否存在，若存在则清空缓存。
+        """
+        if os.path.exists(cache_dir):
+            warnings.warn('Cache already exists')
+            try:
+                shutil.rmtree(cache_dir)  # 清空缓存目录
+            except:
+                warnings.warn('Failed Clean Cache ')
+
     def _setup_gp(self):
+        self.clear_cache()  # 清理缓存
         if self.seed is not None:
             np.random.seed(self.seed)
         # 创建fitness
@@ -115,6 +131,16 @@ class GPRegressor(BaseEstimator, RegressorMixin):
             print(ind)
             raise e
             return (float("inf"),)
+
+    def parallel_eval(self,individuals, n_jobs=4):
+    # 每个进程用一个自己的缓存
+        thread_local = threading.local()
+        def wrapped_eval(ind):
+            if not hasattr(thread_local, "cache"):
+                thread_local.cache = {}
+            return self.eval_func(ind, thread_local.cache)
+        return Parallel(n_jobs=n_jobs)(delayed(wrapped_eval)(ind) for ind in individuals)
+    
 
     def fit(self, X, y):
         X = np.array(X)
@@ -186,7 +212,7 @@ class GPRegressor(BaseEstimator, RegressorMixin):
 
                 # 重新衡量结构有改动的个体
                 invalids = [ind for ind in offspring if not ind.fitness.valid]
-                fitnesses = pool.map(parallel_eval, invalids)
+                fitnesses = list(tqdm(pool.map(parallel_eval, invalids),total=len(invalids)))
                 for ind, fit in zip(invalids, fitnesses):
                     ind.fitness.values = fit
                 # 精英
@@ -216,7 +242,7 @@ class GPRegressor(BaseEstimator, RegressorMixin):
                     print(logbook.stream)
                 # 清理日志的机制
                 if g%2==0:
-                    self.value_log = GPmemorize.clean_log(self.value_log,10000)
+                    self.value_log = GPmemorize.clean_log(self.value_log,100)
                     
         pool.close()
         pool.join()

@@ -4,7 +4,6 @@ from GeneticOperationPipline import GeneticOperationPipeline
 from deap import gp
 import random
 from sklearn.metrics import mean_absolute_error
-import GPmemorize
 from functools import partial
 import multiprocessing
 X = np.random.rand(100, 2)
@@ -28,16 +27,19 @@ main_set.addPrimitive(np.multiply, 2)
 main_set.addPrimitive(np.sin, 1)
 main_set.addPrimitive(np.cos, 1)
 main_set.addPrimitive(np.tan,1)
-#main_set.addTerminal(np.pi)
+main_set.addTerminal(np.pi)
 main_set.addPrimitive(protected_div, 2, name="div")
-#main_set.addEphemeralConstant("rand0", partial(random.uniform, -1, 1))
+main_set.addEphemeralConstant("rand0", partial(random.uniform, -1, 1))
 
 def mse_fitness(y_train,y_pred):
-    return mean_absolute_error(y_train, y_pred)
+    try:
+        return mean_absolute_error(y_train, y_pred)
+    except:
+        return float('inf')
 
 if __name__ =="__main__":
     from multiprocessing import Manager
     with Manager() as manager:
         valuelog = manager.dict() 
-        model = GPRegressor(pset=main_set,genetic_operator_pipline=GeneticOperationPipeline,fitness_function=mse_fitness,value_log=valuelog,n_jobs=2)
+        model = GPRegressor(pset=main_set,genetic_operator_pipline=GeneticOperationPipeline,fitness_function=mse_fitness,value_log=valuelog,n_jobs=10)
         model.fit(X,y)
