@@ -42,8 +42,7 @@ def log_decorator(shared_log,expr_str):
                     else:
                         shared_log[expr_str] = {
                             "function": expr_str,
-                            "count": 1,
-                        }
+                            "count": 1,}
             # 调用缓存函数
             return cached_func(*args)
         return wrapper

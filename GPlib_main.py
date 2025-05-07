@@ -27,15 +27,12 @@ main_set.addPrimitive(np.multiply, 2)
 main_set.addPrimitive(np.sin, 1)
 main_set.addPrimitive(np.cos, 1)
 main_set.addPrimitive(np.tan,1)
-main_set.addTerminal(np.pi)
+#main_set.addTerminal(np.pi)
 main_set.addPrimitive(protected_div, 2, name="div")
-main_set.addEphemeralConstant("rand0", partial(random.uniform, -1, 1))
+#main_set.addEphemeralConstant("rand0", partial(random.uniform, -1, 1))
 
 def mse_fitness(y_train,y_pred):
-    try:
-        return mean_absolute_error(y_train, y_pred)
-    except:
-        return float('inf')
+    return mean_absolute_error(y_train, y_pred)
 
 if __name__ =="__main__":
     from multiprocessing import Manager
