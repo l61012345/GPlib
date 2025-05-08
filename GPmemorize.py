@@ -22,41 +22,42 @@ def get_shared_log(manager=None):
 def safe_hash(expr_str):
     return hashlib.md5(expr_str.encode()).hexdigest()
 
-def log_decorator(shared_log,expr_str):
+
+def log_decorator(shared_log, expr_str):
     """
-    包装函数：缓存输出并统计表达式调用次数（不缓存中间值结构）。
-    - expr_str: 当前表达式（如 "add(ARG0, ARG1)"）
-    - shared_counter: multiprocessing.Manager().dict() 类型，记录每个 expr_str 的调用次数
+    装饰器：包装原语函数，记录函数名称、输入、输出以及形状信息。
+    
+    参数:
+    - shared_log: 共享日志列表
+    - expr_str: 当前调用的表达式字符串（例如 "add(ARG0, ARG1)"）
     """
     def decorator(func):
-        # joblib 缓存计算
-        @memory.cache
-        def cached_func(*args):
-            return func(*args)
         def wrapper(*args, **kwargs):
-            # 更新调用记录器
-            if shared_log is not None:
-                with lock:
-                    if shared_log.get(expr_str) is not None:
-                        shared_log[expr_str]["count"] += 1
-                    else:
-                        shared_log[expr_str] = {
-                            "function": expr_str,
-                            "count": 1,}
-            # 调用缓存函数
-            return cached_func(*args)
+            # 记录输入的形状和数值（部分）
+            if isinstance(args, (int, float)):
+                input_values = tuple(args)
+            else:
+                input_values = tuple(np.concatenate(args,axis=0))
+            # 生成哈希键，唯一标识一个计算
+            key = (expr_str, input_values)
+            # 检查共享日志
+            if key in shared_log:
+                shared_log[key]["count"] += 1
+                return shared_log[key]["output_value"]  # 直接返回已计算结果
+            else:
+                # 调用原函数
+                result = func(*args, **kwargs)
+                shared_log[key] = {
+                    "function": expr_str,
+                    "input_values": input_values,
+                    "output_value": result,
+                    "count": 1,
+                }
+                return result
         return wrapper
     return decorator
 
-def clean_log(shared_log, max_size=50000):
-    if len(shared_log) > max_size:
-        sorted_items = sorted(shared_log.items(), key=lambda x: x[1]["count"])
-        for k, _ in sorted_items[:len(shared_log) - max_size]:
-            del shared_log[k]
-    return shared_log
-
-
-def compute_tree(expr, pset,x,prefix="ARG",overflow_inf = True,shared_log=None):
+def compute_tree(expr, pset,x, prefix="ARG",overflow_inf = True,shared_log=None,MIcultuation = True):
     # 初始化栈，用于递归计算每个节点
     stack = deque()
     # 遍历树中的每个节点并递归计算值
@@ -66,12 +67,11 @@ def compute_tree(expr, pset,x,prefix="ARG",overflow_inf = True,shared_log=None):
             prim, args, arg_expressions, id = stack.pop()  # 获取当前节点的原语和参数
             if isinstance(prim, gp.Primitive):
                 # 对于 Primitive 节点，调用相应的原语函数计算结果
-                # 拼表达式，记录用
                 if arg_expressions:
                     expr_str = f"{prim.name}({', '.join(arg_expressions)})" # 如果有拼好的表达式就直接拿来用
                 else:
                     expr_str = f"{prim.name}({', '.join(map(str, args))})" # 如果没有就重新创建一个
-                decorated_func = pset.context[prim.name]
+                decorated_func = log_decorator(shared_log, expr_str)(pset.context[prim.name]) # 调用当前的函数
                 try:
                     result = decorated_func(*args)
                 except OverflowError as e:
@@ -81,15 +81,7 @@ def compute_tree(expr, pset,x,prefix="ARG",overflow_inf = True,shared_log=None):
                     else:
                         result = args[0]  # 返回第一个参数作为结果
                     logging.error("Overflow error occurred: %s, args: %s", str(e), str(args))
-                # 如果需要调用日志就记录一下
-                if shared_log is not None:
-                    with lock:
-                        if expr_str in shared_log:
-                            shared_log[expr_str]["count"] += 1
-                        else:
-                            shared_log[expr_str] = {"function": expr_str, "count": 1,'result':result}
-                else:
-                    pass
+
             elif isinstance(prim, gp.Terminal):
                 # 对于 Terminal 节点，获取数据集中的相应特征值
                 if prefix in prim.name: # 这是个变量
@@ -106,15 +98,15 @@ def compute_tree(expr, pset,x,prefix="ARG",overflow_inf = True,shared_log=None):
                     expr_str = str(prim.value)
             else:
                 raise Exception("Unsupported primitive type!")
+
             # 将结果传递给父节点（即将当前节点的结果作为参数传递给上层）
             if not stack:
                 break  # 如果栈为空，表示所有节点都已经计算过
             stack[-1][1].append(result)  # 将计算结果添加到栈顶父节点的参数列表
             stack[-1][2].append(expr_str)  # 记录子表达式
+
     # 最终返回树的计算结果
     return result
-
-
 
 
 def find_top_subtree_in_log(topn:int,pset:gp.PrimitiveSet,shared_log:dict,key_name:str,largest = True, verbose = 1):

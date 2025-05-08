@@ -12,6 +12,7 @@ from joblib import Parallel, delayed
 import threading
 import os
 import shutil
+from collections import deque
 
 class GPRegressor(BaseEstimator, RegressorMixin):
     def __init__(
@@ -84,15 +85,8 @@ class GPRegressor(BaseEstimator, RegressorMixin):
                 UserWarning)
             time.sleep(1)
 
-    def exist_cache(self, cache_dir="gp_cache"):
-        """
-        检查缓存文件夹是否存在
-        """
-        if os.path.exists(cache_dir):
-            warnings.warn('Cache already existsm,try to clean')
 
     def _setup_gp(self):
-        self.exist_cache()  # 检查缓存
         if self.seed is not None:
             np.random.seed(self.seed)
         # 创建fitness
@@ -114,7 +108,7 @@ class GPRegressor(BaseEstimator, RegressorMixin):
     def eval_func(self,ind,X,y):
         try:
             # 计算树在X上的输出
-            pred = GPmemorize.compute_tree(
+            pred = self.compute_tree(
                 ind, pset=self.pset, x=X, shared_log=self.value_log
             )
             if callable(self.fitness_function):
@@ -127,10 +121,89 @@ class GPRegressor(BaseEstimator, RegressorMixin):
             print(ind)
             raise e
             return (float("inf"),)
+    def log_decorator(self,shared_log, expr_str):
+        """
+        装饰器：包装原语函数，记录函数名称、输入、输出以及形状信息。
+        
+        参数:
+        - shared_log: 共享日志列表
+        - expr_str: 当前调用的表达式字符串（例如 "add(ARG0, ARG1)"）
+        """
+        def decorator(func):
+            def wrapper(*args, **kwargs):
+                # 记录输入的形状和数值（部分）
+                if isinstance(args, (int, float)):
+                    input_values = tuple(args)
+                else:
+                    input_values = tuple(np.concatenate(args,axis=0))
+                # 生成哈希键，唯一标识一个计算
+                key = (expr_str, input_values)
+                # 检查共享日志
+                if key in shared_log:
+                    shared_log[key]["count"] += 1
+                    return shared_log[key]["output_value"]  # 直接返回已计算结果
+                else:
+                    # 调用原函数
+                    result = func(*args, **kwargs)
+                    shared_log[key] = {
+                        "function": expr_str,
+                        "input_values": input_values,
+                        "output_value": result,
+                        "count": 1,
+                    }
+                    return result
+            return wrapper
+        return decorator
 
-    # 并行评估函数，包一层
-    def parallel_eval_wrapper(ind, X, y, eval_func):
-        return eval_func(ind, X, y)
+    def compute_tree(self,expr, pset,x, prefix="ARG",overflow_inf = True,shared_log=None,MIcultuation = True):
+        # 初始化栈，用于递归计算每个节点
+        stack = deque()
+        # 遍历树中的每个节点并递归计算值
+        for id, node in enumerate(expr):
+            stack.append((node, [], [], id))  # 将节点和空参数列表压入栈
+            while len(stack[-1][1]) == stack[-1][0].arity:  # 确保所有子节点都被处理
+                prim, args, arg_expressions, id = stack.pop()  # 获取当前节点的原语和参数
+                if isinstance(prim, gp.Primitive):
+                    # 对于 Primitive 节点，调用相应的原语函数计算结果
+                    if arg_expressions:
+                        expr_str = f"{prim.name}({', '.join(arg_expressions)})" # 如果有拼好的表达式就直接拿来用
+                    else:
+                        expr_str = f"{prim.name}({', '.join(map(str, args))})" # 如果没有就重新创建一个
+                    decorated_func = self.log_decorator(shared_log, expr_str)(pset.context[prim.name]) # 调用当前的函数
+                    try:
+                        result = decorated_func(*args)
+                    except OverflowError as e:
+                        # 对溢出的处理
+                        if overflow_inf == True:
+                            result = float('inf') # 返回inf
+                        else:
+                            result = args[0]  # 返回第一个参数作为结果
+
+                elif isinstance(prim, gp.Terminal):
+                    # 对于 Terminal 节点，获取数据集中的相应特征值
+                    if prefix in prim.name: # 这是个变量
+                        if isinstance(x, (np.ndarray)):
+                            expr_str = prim.name
+                            if x.ndim == 1:
+                                result = x  # 直接使用整个数组
+                            else:
+                                result = x[:, int(prim.name.replace(prefix, ""))] # 把变量对应的值带入运算
+                        else:
+                            raise ValueError("Datatype should be np.ndarray")
+                    else:
+                        result = float(prim.value)  # 对于常量终结符，直接使用值
+                        expr_str = str(prim.value)
+                else:
+                    raise Exception("Unsupported primitive type!")
+
+                # 将结果传递给父节点（即将当前节点的结果作为参数传递给上层）
+                if not stack:
+                    break  # 如果栈为空，表示所有节点都已经计算过
+                stack[-1][1].append(result)  # 将计算结果添加到栈顶父节点的参数列表
+                stack[-1][2].append(expr_str)  # 记录子表达式
+
+        # 最终返回树的计算结果
+        return result
 
     def fit(self, X, y):
         X = np.array(X)
@@ -138,10 +211,7 @@ class GPRegressor(BaseEstimator, RegressorMixin):
         self.X, self.y = X, y  # 确保在类内共享
         self._setup_gp()
 
-        parallel_eval = partial(self.eval_func, X=X, y=y)
-        self.toolbox.register("evaluate", parallel_eval)
-        self.toolbox.register("map", lambda func, data: Parallel(n_jobs=self.n_jobs)(delayed(func)(item) for item in data))
-
+        self.toolbox.register("evaluate", self.eval_func,X=X,y=y)
 
         pop = self.toolbox.population(n=self.pop_size)
         hof = tools.HallOfFame(self.hof_size)
@@ -207,9 +277,8 @@ class GPRegressor(BaseEstimator, RegressorMixin):
             # 重新衡量结构有改动的个体
             # 并行评估
             invalids = [ind for ind in offspring if not ind.fitness.valid]
-            fitnesses = Parallel(n_jobs=self.n_jobs)(
-                delayed(self.eval_func)(ind, X, y) for ind in tqdm(invalids, total=len(invalids))
-            )
+            with multiprocessing.Pool(processes=self.n_jobs) as pool:
+                fitnesses = pool.map(self.toolbox.evaluate, invalids)
             for ind, fit in zip(invalids, fitnesses):
                 ind.fitness.values = fit
             # 精英
@@ -237,10 +306,6 @@ class GPRegressor(BaseEstimator, RegressorMixin):
                 )
                 print("------------------------------")
                 print(logbook.stream)
-            # 清理日志的机制
-            if g%2==0:
-                if self.value_log is not None:
-                    self.value_log = GPmemorize.clean_log(self.value_log,100)
                 
 
         self._best_ind = hof[0]

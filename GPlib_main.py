@@ -6,6 +6,7 @@ import random
 from sklearn.metrics import mean_absolute_error
 from functools import partial
 import multiprocessing
+import GPmemorize
 
 random.seed(10)
 np.random.seed(10)
@@ -49,22 +50,23 @@ def mse_fitness(y_train, y_pred):
 
 
 if __name__ == "__main__":
-    from multiprocessing import Manager
-
-    with Manager() as manager:
-        valuelog = manager.dict()
-        model = GPRegressor(
-            gen_num=20,
-            pop_size=300,
-            pset=main_set,
-            genetic_operator_pipline=GeneticOperationPipeline,
-            fitness_function=mse_fitness,
-            n_jobs=10,
-            hof_size=5,
-            elitism=True,
-            seed=random.seed(10),
-            init_mintree_height=2,
-            init_maxtree_height=6,
-            value_log=valuelog
-        )
-        model.fit(X, y)
+    multiprocessing.freeze_support()  # Windows 系统下需要调用
+    # 创建 Manager 对象，传递给 MIGP 中的共享 log
+    manager = multiprocessing.Manager()
+    valuelog = GPmemorize.get_shared_log(manager)  # 在主进程中创建共享日志
+    model = GPRegressor(
+        gen_num=20,
+        pop_size=3,
+        pset=main_set,
+        genetic_operator_pipline=GeneticOperationPipeline,
+        fitness_function=mse_fitness,
+        n_jobs=2,
+        hof_size=5,
+        elitism=True,
+        seed=random.seed(10),
+        init_mintree_height=2,
+        init_maxtree_height=6,
+        value_log=valuelog
+    )
+    model.fit(X, y)
+    print(valuelog)

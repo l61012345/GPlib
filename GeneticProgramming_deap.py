@@ -95,7 +95,7 @@ toolbox.decorate("mutate", gp.staticLimit(key=len, max_value=250))
 # toolbox.decorate("shrink_mutate", gp.staticLimit(operator.attrgetter('height'), max_value=20))
 
 # source task
-def source_task(pop_size = 300, hof_size = 5, mate_rate = 0.9, muta_rate = 0.08,point_muta_rate=0.01, shrink_muta_rate = 0.01, gen_num = 20):
+def source_task(pop_size = 3, hof_size = 5, mate_rate = 0.9, muta_rate = 0.08,point_muta_rate=0.01, shrink_muta_rate = 0.01, gen_num = 20):
     global current_time
     best_ind_fitness = 0
     # initialize the population
