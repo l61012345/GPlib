@@ -34,7 +34,7 @@ def log_decorator(shared_log,expr_str):
         def cached_func(*args):
             return func(*args)
         def wrapper(*args, **kwargs):
-            # 更新调用计数器（可选）
+            # 更新调用记录器
             if shared_log is not None:
                 with lock:
                     if shared_log.get(expr_str) is not None:
@@ -66,14 +66,12 @@ def compute_tree(expr, pset,x,prefix="ARG",overflow_inf = True,shared_log=None):
             prim, args, arg_expressions, id = stack.pop()  # 获取当前节点的原语和参数
             if isinstance(prim, gp.Primitive):
                 # 对于 Primitive 节点，调用相应的原语函数计算结果
+                # 拼表达式，记录用
                 if arg_expressions:
                     expr_str = f"{prim.name}({', '.join(arg_expressions)})" # 如果有拼好的表达式就直接拿来用
                 else:
                     expr_str = f"{prim.name}({', '.join(map(str, args))})" # 如果没有就重新创建一个
-                if shared_log != None:
-                    decorated_func = log_decorator(shared_log, expr_str)(pset.context[prim.name]) # 调用当前的函数
-                else:
-                    decorated_func = pset.context[prim.name]
+                decorated_func = pset.context[prim.name]
                 try:
                     result = decorated_func(*args)
                 except OverflowError as e:
@@ -83,6 +81,15 @@ def compute_tree(expr, pset,x,prefix="ARG",overflow_inf = True,shared_log=None):
                     else:
                         result = args[0]  # 返回第一个参数作为结果
                     logging.error("Overflow error occurred: %s, args: %s", str(e), str(args))
+                # 如果需要调用日志就记录一下
+                if shared_log is not None:
+                    with lock:
+                        if expr_str in shared_log:
+                            shared_log[expr_str]["count"] += 1
+                        else:
+                            shared_log[expr_str] = {"function": expr_str, "count": 1,'result':result}
+                else:
+                    pass
             elif isinstance(prim, gp.Terminal):
                 # 对于 Terminal 节点，获取数据集中的相应特征值
                 if prefix in prim.name: # 这是个变量

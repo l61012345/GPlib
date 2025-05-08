@@ -128,22 +128,21 @@ class GPRegressor(BaseEstimator, RegressorMixin):
             raise e
             return (float("inf"),)
 
-    def parallel_eval(self,individuals, n_jobs=4):
-    # 每个进程用一个自己的缓存
-        thread_local = threading.local()
-        def wrapped_eval(ind):
-            if not hasattr(thread_local, "cache"):
-                thread_local.cache = {}
-            return self.eval_func(ind, thread_local.cache)
-        return Parallel(n_jobs=n_jobs)(delayed(wrapped_eval)(ind) for ind in individuals)
-    
+    # 并行评估函数，包一层
+    def parallel_eval_wrapper(ind, X, y, eval_func):
+        return eval_func(ind, X, y)
 
     def fit(self, X, y):
         X = np.array(X)
         y = np.array(y)
+        self.X, self.y = X, y  # 确保在类内共享
         self._setup_gp()
+
         parallel_eval = partial(self.eval_func, X=X, y=y)
         self.toolbox.register("evaluate", parallel_eval)
+        self.toolbox.register("map", lambda func, data: Parallel(n_jobs=self.n_jobs)(delayed(func)(item) for item in data))
+
+
         pop = self.toolbox.population(n=self.pop_size)
         hof = tools.HallOfFame(self.hof_size)
 
@@ -184,65 +183,66 @@ class GPRegressor(BaseEstimator, RegressorMixin):
         logbook.chapters["size"].header = "min", "avg", "max"
         logbook.chapters["height"].header = "min", "avg", "max"
 
-        with multiprocessing.Pool(processes=self.n_jobs) as pool:
-            for g in range(self.gen_num):
-                start_time = time.perf_counter()
-                if self.genetic_operator_pipline is None:  # 如果用户没有定义pipline，就用默认设置
-                    # 锦标赛选择
-                    offspring = tools.selTournament(pop, len(pop), 3)
-                    offspring = list(map(self.toolbox.clone, offspring))
-                    # 标准交叉
-                    for i in range(1, len(offspring), 2):
-                        if np.random.rand() < 0.9:
-                            offspring[i - 1], offspring[i] = gp.cxOnePoint(
-                                offspring[i - 1], offspring[i]
-                            )
-                            del offspring[i - 1].fitness.values, offspring[i].fitness.values
-                    # 点突变
-                    for i in range(len(offspring)):
-                        if np.random.rand() < 0.1:
-                            (offspring[i],) = gp.mutNodeReplacement(offspring[i],self.pset)
-                            del offspring[i].fitness.values
-                else:
-                    offspring = self.genetic_operator_pipline(pset=self.pset).apply(pop)
+        for g in range(self.gen_num):
+            start_time = time.perf_counter()
+            if self.genetic_operator_pipline is None:  # 如果用户没有定义pipline，就用默认设置
+                # 锦标赛选择
+                offspring = tools.selTournament(pop, len(pop), 3)
+                offspring = list(map(self.toolbox.clone, offspring))
+                # 标准交叉
+                for i in range(1, len(offspring), 2):
+                    if np.random.rand() < 0.9:
+                        offspring[i - 1], offspring[i] = gp.cxOnePoint(
+                            offspring[i - 1], offspring[i]
+                        )
+                        del offspring[i - 1].fitness.values, offspring[i].fitness.values
+                # 点突变
+                for i in range(len(offspring)):
+                    if np.random.rand() < 0.1:
+                        (offspring[i],) = gp.mutNodeReplacement(offspring[i],self.pset)
+                        del offspring[i].fitness.values
+            else:
+                offspring = self.genetic_operator_pipline(pset=self.pset).apply(pop)
 
-                # 重新衡量结构有改动的个体
-                invalids = [ind for ind in offspring if not ind.fitness.valid]
-                fitnesses = list(tqdm(pool.map(parallel_eval, invalids),total=len(invalids)))
-                for ind, fit in zip(invalids, fitnesses):
-                    ind.fitness.values = fit
-                # 精英
-                if self.elitism == True:
-                    offspring = GPutilities.elitism(offspring, hof)
-                else:
-                    pass
+            # 重新衡量结构有改动的个体
+            # 并行评估
+            invalids = [ind for ind in offspring if not ind.fitness.valid]
+            fitnesses = Parallel(n_jobs=self.n_jobs)(
+                delayed(self.eval_func)(ind, X, y) for ind in tqdm(invalids, total=len(invalids))
+            )
+            for ind, fit in zip(invalids, fitnesses):
+                ind.fitness.values = fit
+            # 精英
+            if self.elitism == True:
+                offspring = GPutilities.elitism(offspring, hof)
+            else:
+                pass
 
-                pop[:] = offspring
-                hof.update(pop)
-                end_time = time.perf_counter()
-                time_cost = float(end_time - start_time) * 1000.0
-                best_ind = tools.selBest(hof, 1)[0]
-                if self.verbose == True:
-                    record = mstats.compile(pop)
-                    logbook.record(
-                        gen=g,
-                        time=time_cost,
-                        num=len(pop),
-                        best_ind=str(best_ind),
-                        best_ind_len=len(best_ind),
-                        best_ind_height=best_ind.height,
-                        new=len(invalids),
-                        **record,
-                    )
-                    print("------------------------------")
-                    print(logbook.stream)
-                # 清理日志的机制
-                if g%2==0:
-                    if self.value_log is not None:
-                        self.value_log = GPmemorize.clean_log(self.value_log,100)
-                    
-        pool.close()
-        pool.join()
+            pop[:] = offspring
+            hof.update(pop)
+            end_time = time.perf_counter()
+            time_cost = float(end_time - start_time) * 1000.0
+            best_ind = tools.selBest(hof, 1)[0]
+            if self.verbose == True:
+                record = mstats.compile(pop)
+                logbook.record(
+                    gen=g,
+                    time=time_cost,
+                    num=len(pop),
+                    best_ind=str(best_ind),
+                    best_ind_len=len(best_ind),
+                    best_ind_height=best_ind.height,
+                    new=len(invalids),
+                    **record,
+                )
+                print("------------------------------")
+                print(logbook.stream)
+            # 清理日志的机制
+            if g%2==0:
+                if self.value_log is not None:
+                    self.value_log = GPmemorize.clean_log(self.value_log,100)
+                
+
         self._best_ind = hof[0]
         self._best_ind_fitness = float(self._best_ind.fitness.values[0])
         self._compiled_func = gp.compile(expr=self._best_ind, pset=self.pset)
