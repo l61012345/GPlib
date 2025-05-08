@@ -56,7 +56,7 @@ if __name__ == "__main__":
     valuelog = GPmemorize.get_shared_log(manager)  # 在主进程中创建共享日志
     model = GPRegressor(
         gen_num=20,
-        pop_size=3,
+        pop_size=300,
         pset=main_set,
         genetic_operator_pipline=GeneticOperationPipeline,
         fitness_function=mse_fitness,
@@ -66,7 +66,7 @@ if __name__ == "__main__":
         seed=random.seed(10),
         init_mintree_height=2,
         init_maxtree_height=6,
-        value_log=valuelog
+        value_log=None
     )
     model.fit(X, y)
     print(valuelog)

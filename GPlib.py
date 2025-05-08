@@ -165,11 +165,15 @@ class GPRegressor(BaseEstimator, RegressorMixin):
                 prim, args, arg_expressions, id = stack.pop()  # 获取当前节点的原语和参数
                 if isinstance(prim, gp.Primitive):
                     # 对于 Primitive 节点，调用相应的原语函数计算结果
-                    if arg_expressions:
-                        expr_str = f"{prim.name}({', '.join(arg_expressions)})" # 如果有拼好的表达式就直接拿来用
+                    if shared_log is not None: # 是否开启了share_log功能
+                        if arg_expressions:
+                            expr_str = f"{prim.name}({', '.join(arg_expressions)})" # 如果有拼好的表达式就直接拿来用
+                        else:
+                            expr_str = f"{prim.name}({', '.join(map(str, args))})" # 如果没有就重新创建一个
+                            decorated_func = self.log_decorator(shared_log, expr_str)(pset.context[prim.name]) # 调用当前的函数
                     else:
-                        expr_str = f"{prim.name}({', '.join(map(str, args))})" # 如果没有就重新创建一个
-                    decorated_func = self.log_decorator(shared_log, expr_str)(pset.context[prim.name]) # 调用当前的函数
+                        expr_str = None
+                        decorated_func = pset.context[prim.name] # 没开启就直接调用函数
                     try:
                         result = decorated_func(*args)
                     except OverflowError as e:
