@@ -13,6 +13,9 @@ import threading
 import os
 import shutil
 from collections import deque
+import traceback
+
+lock = multiprocessing.Lock()
 
 class GPRegressor(BaseEstimator, RegressorMixin):
     def __init__(
@@ -111,6 +114,9 @@ class GPRegressor(BaseEstimator, RegressorMixin):
             pred = self.compute_tree(
                 ind, pset=self.pset, x=X, shared_log=self.value_log
             )
+            # 如果 pred 是一个常数或标量，广播成与 y 相同形状
+            if np.isscalar(pred) or (isinstance(pred, np.ndarray) and pred.size == 1):
+                pred = np.full_like(y, fill_value=float(pred))
             if callable(self.fitness_function):
                 loss = self.fitness_function(pred, y) # 使用自定义的fitness function进行衡量
             else:
@@ -121,7 +127,66 @@ class GPRegressor(BaseEstimator, RegressorMixin):
             print(ind)
             raise e
             return (float("inf"),)
-    def log_decorator(self,shared_log, expr_str):
+    # 构造一个稳定、可哈希的 key（expr_str + 输入值）
+    def make_hashable(self,x):
+        if isinstance(x, np.ndarray):
+            return hash(x.tobytes())  # 快速且唯一
+        else:
+            try:
+                return hash(x)
+            except Exception as e:
+                print(x)
+                raise e
+            
+
+    def decorator(self,func,shared_log,expr_str):
+        def wrapper(*args, **kwargs):
+            def serialize_arg(arg):
+                if isinstance(arg, np.ndarray):
+                    return ','.join(str(float(x)) for x in arg.flatten())
+                elif isinstance(arg, (list, tuple)):
+                    return ','.join(str(float(x)) for x in arg)
+                elif isinstance(arg, (int, float)):
+                    return str(float(arg))
+                else:
+                    return str(arg)  # fallback
+            
+            input_str = '|'.join(serialize_arg(arg) for arg in args)
+            key = f"{expr_str}|{input_str}"
+            #key = expr_str
+            # 检查共享日志
+            if key in shared_log:
+                entry = shared_log.get(key)
+                if entry is not None: 
+                    with lock:
+                        # 复制字典，以显式的方式更新count，否则multiprocessing.dict()不更新
+                        entry["count"] += 1
+                        try:
+                            shared_log[key] = entry
+                        except Exception as e:
+                            print("❌ Error writing to shared_log:")
+                            print("🔑 key type:", type(key), "| key value:", key)
+                            print("📦 entry type:", type(entry), "| entry value:", entry)
+                            traceback.print_exc()
+                            raise e
+                        return shared_log[key]["output_value"]  # 直接返回已计算结果
+            else:
+                # 调用原函数
+                try:
+                    result = func(*args, **kwargs)
+                except Exception as E:
+                    raise E
+                with lock:
+                    shared_log[key] = {
+                        "function": expr_str,
+                        "input_values": input_str,
+                        "output_value": result,
+                        "count": 1,
+                    }
+                return result
+        return wrapper
+
+    def log_decorator(self,shared_log, expr_str,func):
         """
         装饰器：包装原语函数，记录函数名称、输入、输出以及形状信息。
         
@@ -129,29 +194,10 @@ class GPRegressor(BaseEstimator, RegressorMixin):
         - shared_log: 共享日志列表
         - expr_str: 当前调用的表达式字符串（例如 "add(ARG0, ARG1)"）
         """
-        def decorator(func):
-            def wrapper(*args, **kwargs):
-                input_values = tuple(args)
-                # 生成哈希键，唯一标识一个计算
-                key = expr_str
-                # 检查共享日志
-                if key in shared_log:
-                    shared_log[key]["count"] += 1
-                    return shared_log[key]["output_value"]  # 直接返回已计算结果
-                else:
-                    # 调用原函数
-                    result = func(*args, **kwargs)
-                    shared_log[key] = {
-                        "function": expr_str,
-                        "input_values": input_values,
-                        "output_value": result,
-                        "count": 1,
-                    }
-                    return result
-            return wrapper
+        decorator = self.decorator(func,shared_log,expr_str)
         return decorator
 
-    def compute_tree(self,expr, pset,x, prefix="ARG",overflow_inf = True,shared_log=None,MIcultuation = True):
+    def compute_tree(self,expr, pset,x, prefix="ARG",overflow_inf = False,shared_log=None):
         # 初始化栈，用于递归计算每个节点
         stack = deque()
         # 遍历树中的每个节点并递归计算值
@@ -159,6 +205,7 @@ class GPRegressor(BaseEstimator, RegressorMixin):
             stack.append((node, [], [], id))  # 将节点和空参数列表压入栈
             while len(stack[-1][1]) == stack[-1][0].arity:  # 确保所有子节点都被处理
                 prim, args, arg_expressions, id = stack.pop()  # 获取当前节点的原语和参数
+                result = None # 清空result
                 if isinstance(prim, gp.Primitive):
                     # 对于 Primitive 节点，调用相应的原语函数计算结果
                     if shared_log is not None: # 是否开启了share_log功能
@@ -166,7 +213,7 @@ class GPRegressor(BaseEstimator, RegressorMixin):
                             expr_str = f"{prim.name}({', '.join(arg_expressions)})" # 如果有拼好的表达式就直接拿来用
                         else:
                             expr_str = f"{prim.name}({', '.join(map(str, args))})" # 如果没有就重新创建一个
-                        decorated_func = self.log_decorator(shared_log, expr_str)(pset.context[prim.name]) # 调用当前的函数
+                        decorated_func = self.log_decorator(shared_log, expr_str,pset.context[prim.name]) # 调用当前的函数
                     else:
                         expr_str = None
                         decorated_func = pset.context[prim.name] # 没开启就直接调用函数
@@ -176,10 +223,19 @@ class GPRegressor(BaseEstimator, RegressorMixin):
                         # 对溢出的处理
                         if overflow_inf == True:
                             result = float('inf') # 返回inf
+                            print('overflow!!!!!!!!!!!!!!!')
+                            time.sleep(1)
                         else:
                             result = args[0]  # 返回第一个参数作为结果
-
-                elif isinstance(prim, gp.Terminal):
+                    except Exception as error:
+                        print('error')
+                        print(result)
+                        print('errorpart',expr_str)
+                        print(error)
+                        raise error
+                        result = float('inf') # 返回inf
+                    
+                elif isinstance(prim, gp.Terminal) or isinstance(prim,gp.MetaEphemeral):
                     # 对于 Terminal 节点，获取数据集中的相应特征值
                     if prefix in prim.name: # 这是个变量
                         if isinstance(x, (np.ndarray)):
@@ -306,7 +362,6 @@ class GPRegressor(BaseEstimator, RegressorMixin):
                 )
                 print("------------------------------")
                 print(logbook.stream)
-                
 
         self._best_ind = hof[0]
         self._best_ind_fitness = float(self._best_ind.fitness.values[0])

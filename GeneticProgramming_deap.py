@@ -17,7 +17,7 @@ x2 = np.linspace(-5, 5, 100)
 X1, X2 = np.meshgrid(x1, x2)
 # 将网格展平成一个 (10000, 2) 的点集
 X = np.column_stack([X1.ravel(), X2.ravel()])
-y = X[:, 0] ** 2 + np.sin(X[:, 1])
+y = X[:, 0] ** 2 + np.sin(X[:, 1])+1
 current_time = datetime.now().strftime("%Y%m%d_%H%M%S") # local time for log
 
 # Protective Div
@@ -42,9 +42,9 @@ main_set.addPrimitive(np.sin, 1)
 main_set.addPrimitive(np.cos, 1)
 main_set.addPrimitive(np.tan,1)
 #main_set.addPrimitive(np.min,1)
-#main_set.addTerminal(np.pi)
+main_set.addTerminal(np.pi)
 main_set.addPrimitive(protected_div, 2, name="div")
-#main_set.addEphemeralConstant("rand0", partial(random.uniform, -1, 1))
+main_set.addEphemeralConstant("rand0", partial(random.uniform, -1, 1))
 
 # Create individual
 # Creates the attribute fitness of an individual, the base class is Fitness
@@ -64,6 +64,9 @@ def evalSymbReg(individual,x_train,y_train, parsimony = 0):
         func = gp.compile(expr=individual,pset=main_set)
         #y_pred = np.array([func(*x) for x in x_train])
         y_pred = func(*x_train.T)
+        # 如果func是常数函数，结果则是一个标量，需要广播出去
+        if np.isscalar(y_pred) or (isinstance(y_pred, np.ndarray) and y_pred.size == 1):
+            y_pred = np.full_like(y, fill_value=float(y_pred))
         raw_fitness = mean_absolute_error(y_train, y_pred)
         if parsimony != None:
             return (raw_fitness + parsimony * len(individual)),
@@ -95,7 +98,7 @@ toolbox.decorate("mutate", gp.staticLimit(key=len, max_value=250))
 # toolbox.decorate("shrink_mutate", gp.staticLimit(operator.attrgetter('height'), max_value=20))
 
 # source task
-def source_task(pop_size = 3, hof_size = 5, mate_rate = 0.9, muta_rate = 0.08,point_muta_rate=0.01, shrink_muta_rate = 0.01, gen_num = 20):
+def source_task(pop_size = 300, hof_size = 5, mate_rate = 0.9, muta_rate = 0.08,point_muta_rate=0.01, shrink_muta_rate = 0.01, gen_num = 20):
     global current_time
     best_ind_fitness = 0
     # initialize the population

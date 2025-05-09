@@ -39,7 +39,7 @@ def log_decorator(shared_log, expr_str):
             else:
                 input_values = tuple(np.concatenate(args,axis=0))
             # 生成哈希键，唯一标识一个计算
-            key = (expr_str, input_values)
+            key = hash(expr_str)
             # 检查共享日志
             if key in shared_log:
                 shared_log[key]["count"] += 1
