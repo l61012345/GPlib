@@ -66,7 +66,7 @@ if __name__ == "__main__":
         seed=random.seed(10),
         init_mintree_height=2,
         init_maxtree_height=6,
-        value_log=None
+        value_log=valuelog
     )
     model.fit(X, y)
     print(valuelog)

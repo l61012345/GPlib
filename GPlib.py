@@ -131,13 +131,9 @@ class GPRegressor(BaseEstimator, RegressorMixin):
         """
         def decorator(func):
             def wrapper(*args, **kwargs):
-                # 记录输入的形状和数值（部分）
-                if isinstance(args, (int, float)):
-                    input_values = tuple(args)
-                else:
-                    input_values = tuple(np.concatenate(args,axis=0))
+                input_values = tuple(args)
                 # 生成哈希键，唯一标识一个计算
-                key = (expr_str, input_values)
+                key = expr_str
                 # 检查共享日志
                 if key in shared_log:
                     shared_log[key]["count"] += 1
@@ -170,7 +166,7 @@ class GPRegressor(BaseEstimator, RegressorMixin):
                             expr_str = f"{prim.name}({', '.join(arg_expressions)})" # 如果有拼好的表达式就直接拿来用
                         else:
                             expr_str = f"{prim.name}({', '.join(map(str, args))})" # 如果没有就重新创建一个
-                            decorated_func = self.log_decorator(shared_log, expr_str)(pset.context[prim.name]) # 调用当前的函数
+                        decorated_func = self.log_decorator(shared_log, expr_str)(pset.context[prim.name]) # 调用当前的函数
                     else:
                         expr_str = None
                         decorated_func = pset.context[prim.name] # 没开启就直接调用函数
@@ -295,7 +291,7 @@ class GPRegressor(BaseEstimator, RegressorMixin):
             hof.update(pop)
             end_time = time.perf_counter()
             time_cost = float(end_time - start_time) * 1000.0
-            best_ind = tools.selBest(hof, 1)[0]
+            best_ind = hof[0]
             if self.verbose == True:
                 record = mstats.compile(pop)
                 logbook.record(
