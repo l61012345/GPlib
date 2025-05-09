@@ -128,32 +128,29 @@ class GPRegressor(BaseEstimator, RegressorMixin):
             raise e
             return (float("inf"),)
     # 构造一个稳定、可哈希的 key（expr_str + 输入值）
-    def make_hashable(self,x):
-        if isinstance(x, np.ndarray):
-            return hash(x.tobytes())  # 快速且唯一
+    def make_hashable(self,arg):
+        if isinstance(arg, np.ndarray):
+            return tuple(float(x) for x in arg.flatten())
+        elif isinstance(arg, (list, tuple)):
+            return tuple(float(x) for x in arg)
+        elif isinstance(arg, (int, float)):
+            return float(arg)
         else:
-            try:
-                return hash(x)
-            except Exception as e:
-                print(x)
-                raise e
-            
+            return str(arg)  # fallback
+
+    def serialize_arg(arg):
+        if isinstance(arg, np.ndarray):
+            return ','.join(str(float(x)) for x in arg.flatten())
+        elif isinstance(arg, (list, tuple)):
+            return ','.join(str(float(x)) for x in arg)
+        elif isinstance(arg, (int, float)):
+            return str(float(arg))
+        else:
+            return str(arg)  # fallback 
 
     def decorator(self,func,shared_log,expr_str):
         def wrapper(*args, **kwargs):
-            def serialize_arg(arg):
-                if isinstance(arg, np.ndarray):
-                    return ','.join(str(float(x)) for x in arg.flatten())
-                elif isinstance(arg, (list, tuple)):
-                    return ','.join(str(float(x)) for x in arg)
-                elif isinstance(arg, (int, float)):
-                    return str(float(arg))
-                else:
-                    return str(arg)  # fallback
-            
-            input_str = '|'.join(serialize_arg(arg) for arg in args)
-            key = f"{expr_str}|{input_str}"
-            #key = expr_str
+            key = expr_str
             # 检查共享日志
             if key in shared_log:
                 entry = shared_log.get(key)
@@ -179,7 +176,7 @@ class GPRegressor(BaseEstimator, RegressorMixin):
                 with lock:
                     shared_log[key] = {
                         "function": expr_str,
-                        "input_values": input_str,
+                        #"input_values": input_key,
                         "output_value": result,
                         "count": 1,
                     }
@@ -189,7 +186,6 @@ class GPRegressor(BaseEstimator, RegressorMixin):
     def log_decorator(self,shared_log, expr_str,func):
         """
         装饰器：包装原语函数，记录函数名称、输入、输出以及形状信息。
-        
         参数:
         - shared_log: 共享日志列表
         - expr_str: 当前调用的表达式字符串（例如 "add(ARG0, ARG1)"）
