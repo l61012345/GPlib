@@ -3,15 +3,8 @@ import time
 from deap import base, creator, tools, gp
 from sklearn.base import BaseEstimator, RegressorMixin
 import warnings
-import GPmemorize
 import GPutilities
 import multiprocessing
-from functools import partial
-from tqdm import tqdm
-from joblib import Parallel, delayed
-import threading
-import os
-import shutil
 from collections import deque
 import traceback
 
@@ -127,18 +120,9 @@ class GPRegressor(BaseEstimator, RegressorMixin):
             print(ind)
             raise e
             return (float("inf"),)
-    # 构造一个稳定、可哈希的 key（expr_str + 输入值）
-    def make_hashable(self,arg):
-        if isinstance(arg, np.ndarray):
-            return tuple(float(x) for x in arg.flatten())
-        elif isinstance(arg, (list, tuple)):
-            return tuple(float(x) for x in arg)
-        elif isinstance(arg, (int, float)):
-            return float(arg)
-        else:
-            return str(arg)  # fallback
 
     def serialize_arg(arg):
+        # 用于序列化输入的函数，本来用于序列化input_value，但是因为记录input_value带来的问题遂取消
         if isinstance(arg, np.ndarray):
             return ','.join(str(float(x)) for x in arg.flatten())
         elif isinstance(arg, (list, tuple)):
@@ -161,9 +145,9 @@ class GPRegressor(BaseEstimator, RegressorMixin):
                         try:
                             shared_log[key] = entry
                         except Exception as e:
-                            print("❌ Error writing to shared_log:")
-                            print("🔑 key type:", type(key), "| key value:", key)
-                            print("📦 entry type:", type(entry), "| entry value:", entry)
+                            print("Error writing to shared_log:")
+                            print("key type:", type(key), "| key value:", key)
+                            print("entry type:", type(entry), "| entry value:", entry)
                             traceback.print_exc()
                             raise e
                         return shared_log[key]["output_value"]  # 直接返回已计算结果
@@ -176,7 +160,8 @@ class GPRegressor(BaseEstimator, RegressorMixin):
                 with lock:
                     shared_log[key] = {
                         "function": expr_str,
-                        #"input_values": input_key,
+                        #"input_values": input_key, 
+                        # 不记录inputvalues，不然字典太大找起来有问题会报错TypeError:should be int
                         "output_value": result,
                         "count": 1,
                     }
@@ -184,16 +169,11 @@ class GPRegressor(BaseEstimator, RegressorMixin):
         return wrapper
 
     def log_decorator(self,shared_log, expr_str,func):
-        """
-        装饰器：包装原语函数，记录函数名称、输入、输出以及形状信息。
-        参数:
-        - shared_log: 共享日志列表
-        - expr_str: 当前调用的表达式字符串（例如 "add(ARG0, ARG1)"）
-        """
+        # 用于调用包装器的函数
         decorator = self.decorator(func,shared_log,expr_str)
         return decorator
 
-    def compute_tree(self,expr, pset,x, prefix="ARG",overflow_inf = False,shared_log=None):
+    def compute_tree(self,expr, pset,x, prefix="ARG",overflow_inf = True,shared_log=None):
         # 初始化栈，用于递归计算每个节点
         stack = deque()
         # 遍历树中的每个节点并递归计算值
@@ -219,15 +199,13 @@ class GPRegressor(BaseEstimator, RegressorMixin):
                         # 对溢出的处理
                         if overflow_inf == True:
                             result = float('inf') # 返回inf
-                            print('overflow!!!!!!!!!!!!!!!')
-                            time.sleep(1)
+                            warnings.warn(OverflowError("Overflow happens"))
                         else:
                             result = args[0]  # 返回第一个参数作为结果
                     except Exception as error:
                         print('error')
                         print(result)
                         print('errorpart',expr_str)
-                        print(error)
                         raise error
                         result = float('inf') # 返回inf
                     
