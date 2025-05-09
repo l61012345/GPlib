@@ -40,7 +40,7 @@ class GPRegressor(BaseEstimator, RegressorMixin):
         fitness function: function \\
         parsimony: float, panelty of size \\
         seed: random seeds \\
-        value_log: a dict used during evaluation for memorize subtrees result, use shared_log = GPmemorize.get_shared_log() to create one. \\
+        value_log: a dict used during evaluation for memorize subtrees result, use shared_log = manager.dict() to create one. \\
         fitness_weight: the weight of fitness, usually -1 (min is best) or 1 (max is best) \\
         init_mintree_height: the tree min height in initial population \\
         init_maxtree_height: the tree max height in initial population \\
@@ -70,7 +70,7 @@ class GPRegressor(BaseEstimator, RegressorMixin):
         # 没有value_log的时候提醒创建一个，不然无法加速
         if value_log is None:
             warnings.warn(
-                "No value_log, use shared_log = GPmemorize.get_shared_log() to create one",
+                "No value_log, use shared_log = manager.dict() to create one",
                 UserWarning)
             time.sleep(1)
         if fitness_function is None:
@@ -83,8 +83,6 @@ class GPRegressor(BaseEstimator, RegressorMixin):
                 "No Custom defined Genetic Operations,use default: 3 Tournament, 0.9 std crossover, and 0.2 NodeReplace mutation instead",
                 UserWarning)
             time.sleep(1)
-
-
 
         
     def _setup_gp(self):
@@ -126,23 +124,13 @@ class GPRegressor(BaseEstimator, RegressorMixin):
             raise e
             return (float("inf"),)
 
-    def serialize_arg(arg):
-        # 用于序列化输入的函数，本来用于序列化input_value，但是因为记录input_value带来的问题遂取消
-        if isinstance(arg, np.ndarray):
-            return ','.join(str(float(x)) for x in arg.flatten())
-        elif isinstance(arg, (list, tuple)):
-            return ','.join(str(float(x)) for x in arg)
-        elif isinstance(arg, (int, float)):
-            return str(float(arg))
-        else:
-            return str(arg)  # fallback 
-
     def safe_log_write(self, key, entry):
         """线程安全地写入 shared_log，避免不可序列化对象"""
+        # 加了个lock来专门更新entry，避免出问题
         with lock:
                 self.value_log[key] = entry
 
-    def maybe_clean_log(self, max_entry=10000):
+    def maybe_clean_log(self, max_entry):
         """按需启动清理线程"""
         if len(self.value_log) > max_entry * 1.2:
             cleaner = threading.Thread(
@@ -156,16 +144,17 @@ class GPRegressor(BaseEstimator, RegressorMixin):
         """保留使用频率最高的 max_entry 项"""
         with lock:
             if len(self.value_log) <= max_entry:
-                return
-
-            # 按使用次数排序，保留前 max_entry 项
-            sorted_items = sorted(
-                self.value_log.items(),
-                key=lambda x: x[1].get("count", 0),
-                reverse=True
-            )
-            self.value_log.clear()
-            self.value_log.update(dict(sorted_items[:max_entry]))
+                pass
+            else:
+                warnings.warn("Clean the log, only keep large count entry")
+                # 按使用次数排序，保留前 max_entry 项
+                sorted_items = sorted(
+                    self.value_log.items(),
+                    key=lambda x: x[1].get("count", 0),
+                    reverse=True
+                )
+                self.value_log.clear()
+                self.value_log.update(dict(sorted_items[:max_entry]))
 
     def decorator(self,func,expr_str):
         def wrapper(*args, **kwargs):
@@ -342,7 +331,7 @@ class GPRegressor(BaseEstimator, RegressorMixin):
             else:
                 pass
             if g % 10 == 0:
-                self.maybe_clean_log(max_entry=10)  # 每10代清理一下日志
+                self.clean_log(max_entry=10)  # 每10代清理一下日志
 
             pop[:] = offspring
             hof.update(pop)
