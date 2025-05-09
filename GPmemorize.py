@@ -8,7 +8,7 @@ import hashlib
 from multiprocessing import Lock
 from joblib import Memory
 import os
-memory = Memory(location=os.path.join(os.getcwd(), "gp_cache"), verbose=0)
+#memory = Memory(location=os.path.join(os.getcwd(), "gp_cache"), verbose=0)
 lock = Lock()
 # 将 Manager 和 shared_log 创建放到主进程
 def get_shared_log(manager=None):

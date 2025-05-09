@@ -5,10 +5,8 @@ from sklearn.base import BaseEstimator, RegressorMixin
 import warnings
 import GPutilities
 import multiprocessing
-from multiprocessing import Manager, Lock
 from collections import deque
 import traceback
-import threading
 
 lock = multiprocessing.Lock()
 
@@ -23,7 +21,6 @@ class GPRegressor(BaseEstimator, RegressorMixin):
         fitness_weight=-1,        
         parsimony=0.000,
         value_log=None,
-        log_lock = None,
         init_mintree_height=1,
         init_maxtree_height=3,
         hof_size=1,
@@ -85,8 +82,6 @@ class GPRegressor(BaseEstimator, RegressorMixin):
             time.sleep(1)
 
 
-
-        
     def _setup_gp(self):
         if self.seed is not None:
             np.random.seed(self.seed)
@@ -137,62 +132,45 @@ class GPRegressor(BaseEstimator, RegressorMixin):
         else:
             return str(arg)  # fallback 
 
-    def safe_log_write(self, key, entry):
-        """线程安全地写入 shared_log，避免不可序列化对象"""
-        with lock:
-                self.value_log[key] = entry
-
-    def maybe_clean_log(self, max_entry=10000):
-        """按需启动清理线程"""
-        if len(self.value_log) > max_entry * 1.2:
-            cleaner = threading.Thread(
-                target=self.clean_log,
-                args=(max_entry,),
-                daemon=True  # 后台线程，不阻塞主线程退出
-            )
-            cleaner.start()
-
-    def clean_log(self, max_entry):
-        """保留使用频率最高的 max_entry 项"""
-        with lock:
-            if len(self.value_log) <= max_entry:
-                return
-
-            # 按使用次数排序，保留前 max_entry 项
-            sorted_items = sorted(
-                self.value_log.items(),
-                key=lambda x: x[1].get("count", 0),
-                reverse=True
-            )
-            self.value_log.clear()
-            self.value_log.update(dict(sorted_items[:max_entry]))
-
-    def decorator(self,func,expr_str):
+    def decorator(self,func,shared_log,expr_str):
         def wrapper(*args, **kwargs):
             key = expr_str
-            #input_str = '|'.join(map(str, args))
-            #key = f"{expr_str}|{input_str}"
-            with lock:
-                if key in self.value_log:
-                    # 如果存在，更新 count 值
-                    entry = self.value_log[key]
-                    entry['count'] += 1
-                    output = entry['output_value']
-                else:
-                    output = func(*args, **kwargs)
-                    entry = {
-                        'function': expr_str,
-                        #'input_values': input_str,
-                        'output_value': output,
-                        'count': 1
+            # 检查共享日志
+            if key in shared_log:
+                entry = shared_log.get(key)
+                if entry is not None: 
+                    with lock:
+                        # 复制字典，以显式的方式更新count，否则multiprocessing.dict()不更新
+                        entry["count"] += 1
+                        try:
+                            shared_log[key] = entry
+                        except Exception as e:
+                            print("Error writing to shared_log:")
+                            print("key type:", type(key), "| key value:", key)
+                            print("entry type:", type(entry), "| entry value:", entry)
+                            traceback.print_exc()
+                            raise e
+                        return shared_log[key]["output_value"]  # 直接返回已计算结果
+            else:
+                # 调用原函数
+                try:
+                    result = func(*args, **kwargs)
+                except Exception as E:
+                    raise E
+                with lock:
+                    shared_log[key] = {
+                        "function": expr_str,
+                        #"input_values": input_key, 
+                        # 不记录inputvalues，不然字典太大找起来有问题会报错TypeError:should be int
+                        "output_value": result,
+                        "count": 1,
                     }
-            self.safe_log_write(key, entry)
-            return output
+                return result
         return wrapper
 
-    def log_decorator(self,expr_str,func):
+    def log_decorator(self,shared_log, expr_str,func):
         # 用于调用包装器的函数
-        decorator = self.decorator(func,expr_str)
+        decorator = self.decorator(func,shared_log,expr_str)
         return decorator
 
     def compute_tree(self,expr, pset,x, prefix="ARG",overflow_inf = True,shared_log=None):
@@ -211,7 +189,7 @@ class GPRegressor(BaseEstimator, RegressorMixin):
                             expr_str = f"{prim.name}({', '.join(arg_expressions)})" # 如果有拼好的表达式就直接拿来用
                         else:
                             expr_str = f"{prim.name}({', '.join(map(str, args))})" # 如果没有就重新创建一个
-                        decorated_func = self.log_decorator(expr_str,pset.context[prim.name]) # 调用当前的函数
+                        decorated_func = self.log_decorator(shared_log, expr_str,pset.context[prim.name]) # 调用当前的函数
                     else:
                         expr_str = None
                         decorated_func = pset.context[prim.name] # 没开启就直接调用函数
@@ -256,9 +234,6 @@ class GPRegressor(BaseEstimator, RegressorMixin):
 
         # 最终返回树的计算结果
         return result
-
-
-        
 
     def fit(self, X, y):
         X = np.array(X)
@@ -341,8 +316,6 @@ class GPRegressor(BaseEstimator, RegressorMixin):
                 offspring = GPutilities.elitism(offspring, hof)
             else:
                 pass
-            if g % 10 == 0:
-                self.maybe_clean_log(max_entry=10)  # 每10代清理一下日志
 
             pop[:] = offspring
             hof.update(pop)

@@ -4,7 +4,9 @@ from GeneticOperationPipline import GeneticOperationPipeline
 from deap import gp
 import random
 from sklearn.metrics import mean_absolute_error
+from functools import partial
 import multiprocessing
+import GPmemorize
 import pickle
 
 random.seed(10)
@@ -56,7 +58,7 @@ if __name__ == "__main__":
     multiprocessing.freeze_support()  # Windows 系统下需要调用
     # 创建 Manager 对象，传递给 MIGP 中的共享 log
     with multiprocessing.Manager() as manager:
-        value_log = manager.dict()  # 在主进程中创建共享日志
+        valuelog = manager.dict()  # 在主进程中创建共享日志
         model = GPRegressor(
             gen_num=20,
             pop_size=300,
@@ -69,8 +71,8 @@ if __name__ == "__main__":
             seed=random.seed(10),
             init_mintree_height=2,
             init_maxtree_height=6,
-            value_log=value_log,
+            value_log=valuelog
         )
         model.fit(X, y)
         with open("valuelog.pkl", "wb") as f:
-            pickle.dump(dict(value_log), f)
+            pickle.dump(dict(valuelog), f)
