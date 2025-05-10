@@ -1,3 +1,4 @@
+import multiprocessing.managers
 import numpy as np
 import time
 from deap import base, creator, tools, gp
@@ -5,32 +6,30 @@ from sklearn.base import BaseEstimator, RegressorMixin
 import warnings
 import GPutilities
 import multiprocessing
-from multiprocessing import Manager, Lock
 from collections import deque
-import traceback
 import threading
-
+import matplotlib.pyplot as plt
 lock = multiprocessing.Lock()
 
 class GPRegressor(BaseEstimator, RegressorMixin):
     def __init__(
         self,
-        pset=None,
-        pop_size=100,
-        gen_num=20,
-        genetic_operator_pipline=None,
-        fitness_function=None,
-        fitness_weight=-1,        
-        parsimony=0.000,
-        value_log=None,
-        log_lock = None,
-        init_mintree_height=1,
-        init_maxtree_height=3,
-        hof_size=1,
-        elitism=False,
-        seed=None,
-        n_jobs=1,
-        verbose=True,
+        pset:gp.PrimitiveSet=None,
+        pop_size:int=100,
+        gen_num:int=20,
+        genetic_operator_pipline:__module__=None,
+        fitness_function:function=None,
+        fitness_weight:int=-1,        
+        parsimony:float=0.000,
+        value_log:multiprocessing.managers.DictProxy=None,
+        tracker:bool = False,
+        init_mintree_height:int=1,
+        init_maxtree_height:int=3,
+        hof_size:int=1,
+        elitism:bool=False,
+        seed:int=None,
+        n_jobs:int=1,
+        verbose:bool=True,
     ):
         """
         pset: PrimitiveSet, use it as DEAP PrimitiveSet \\
@@ -40,14 +39,16 @@ class GPRegressor(BaseEstimator, RegressorMixin):
         fitness function: function \\
         parsimony: float, panelty of size \\
         seed: random seeds \\
-        value_log: a dict used during evaluation for memorize subtrees result, use shared_log = manager.dict() to create one. \\
+        value_log: multiprocessing.Manager.dict(),a dict used during evaluation for memorize subtrees result, use shared_log = manager.dict() to create one. \\
+        tracker: bool, if is True, then it will continuely records the change of the subtree with max count for each generation in value_log. 
+                 Use model.best_function_dict to access the final result\\
         fitness_weight: the weight of fitness, usually -1 (min is best) or 1 (max is best) \\
         init_mintree_height: the tree min height in initial population \\
         init_maxtree_height: the tree max height in initial population \\
         hof_size: int, the size of hall-of-frame \\
         elitism: bool, flag to open elitism \\
         verbose: bool, open the log or not. \\
-        n_jobs: int, num of pool used
+        n_jobs: int, num of pool for multiprocessing used
         """
         self.pop_size = pop_size
         self.gen_num = gen_num
@@ -64,6 +65,7 @@ class GPRegressor(BaseEstimator, RegressorMixin):
         self.elitism = elitism
         self.verbose = verbose
         self.n_jobs = n_jobs
+        self.tracker = tracker
 
         if pset is None:
             raise ValueError("pset is empty, you must have one.")
@@ -72,7 +74,13 @@ class GPRegressor(BaseEstimator, RegressorMixin):
             warnings.warn(
                 "No value_log, use shared_log = manager.dict() to create one",
                 UserWarning)
+            self.value_log = None
             time.sleep(1)
+        else:
+            if self.tracker is True:
+                self.best_function_dict = {}
+            else:
+                self.best_function_dict = None
         if fitness_function is None:
             warnings.warn(
                 "No Custom defined fitness function,use MSE instead", UserWarning)
@@ -88,6 +96,7 @@ class GPRegressor(BaseEstimator, RegressorMixin):
     def _setup_gp(self):
         if self.seed is not None:
             np.random.seed(self.seed)
+            warnings.warn('Random Seed is fixed')
         # 创建fitness
         if not hasattr(creator, "FitnessMin"):
             creator.create("FitnessMin", base.Fitness, weights=(self.fitness_weight,))
@@ -103,6 +112,7 @@ class GPRegressor(BaseEstimator, RegressorMixin):
             max_=self.init_maxtree_height)
         self.toolbox.register("individual", tools.initIterate, creator.Individual, self.toolbox.expr)
         self.toolbox.register("population", tools.initRepeat, list, self.toolbox.individual)
+
 
     def eval_func(self,ind,X,y):
         try:
@@ -209,7 +219,7 @@ class GPRegressor(BaseEstimator, RegressorMixin):
                     except OverflowError as e:
                         # 对溢出的处理
                         if overflow_inf == True:
-                            result = float('inf') # 返回inf
+                            result = np.inf # 返回inf
                             warnings.warn(OverflowError("Overflow happens"))
                         else:
                             result = args[0]  # 返回第一个参数作为结果
@@ -246,8 +256,6 @@ class GPRegressor(BaseEstimator, RegressorMixin):
         # 最终返回树的计算结果
         return result
 
-
-        
 
     def fit(self, X, y):
         X = np.array(X)
@@ -325,6 +333,7 @@ class GPRegressor(BaseEstimator, RegressorMixin):
                 fitnesses = pool.map(self.toolbox.evaluate, invalids)
             for ind, fit in zip(invalids, fitnesses):
                 ind.fitness.values = fit
+
             # 精英
             if self.elitism == True:
                 offspring = GPutilities.elitism(offspring, hof)
@@ -352,11 +361,39 @@ class GPRegressor(BaseEstimator, RegressorMixin):
                 )
                 print("------------------------------")
                 print(logbook.stream)
+                
+                if self.best_function_dict is not None:
+                    max_func, max_entry = max(self.value_log.items(),
+                            key=lambda item: item[1]['count']
+                        )
+
+                    # Step 2: 如果 max_func 是新函数，初始化它的记录
+                    if max_func not in self.best_function_dict:
+                        # 初始化填 0 直到当前代数
+                        self.best_function_dict[max_func] = [0] * g
+                        print(f"新加入 best function: {max_func}")
+
+                    # Step 3: 所有已知函数追加当前 count（即使它不是最大）
+                    for func in self.best_function_dict:
+                        count = self.value_log.get(func, {}).get('count', 0)
+                        self.best_function_dict[func].append(count)
 
         self._best_ind = hof[0]
         self._best_ind_fitness = float(self._best_ind.fitness.values[0])
         self._compiled_func = gp.compile(expr=self._best_ind, pset=self.pset)
         GPutilities.SaveLogbookToPickle(logbook, self._best_ind_fitness)
+        if self.tracker is True:
+            for func, counts in self.best_function_dict.items():
+                plt.plot(range(len(counts)), counts, label=func)
+            plt.xlabel('Generation')
+            plt.xticks(np.arange(0, self.gen_num, 1),fontsize=5)
+            plt.ylabel('Count')
+            plt.title('Count Progression of Most Subtrees in each generation')
+            plt.legend(bbox_to_anchor=(1.05, 1),loc='upper left', fontsize='small')
+            plt.grid(True)
+            plt.tight_layout()
+            plt.savefig('count_tracker.svg')
+            plt.close()
         return self
 
     def predict(self, X):

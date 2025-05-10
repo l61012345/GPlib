@@ -7,6 +7,7 @@ from sklearn.metrics import mean_absolute_error
 import multiprocessing
 import pickle
 
+
 random.seed(10)
 np.random.seed(10)
 # 创建一个二维网格的点坐标
@@ -43,13 +44,19 @@ main_set.addPrimitive(np.multiply, 2)
 main_set.addPrimitive(np.sin, 1)
 main_set.addPrimitive(np.cos, 1)
 main_set.addPrimitive(np.tan, 1)
+main_set.addPrimitive(np.exp,1)
+#main_set.addPrimitive(np.power,2)
 main_set.addTerminal(np.pi)
 main_set.addPrimitive(protected_div, 2, name="div")
 main_set.addEphemeralConstant("rand0", rand0)
 
 
 def mse_fitness(y_train, y_pred):
-    return mean_absolute_error(y_train, y_pred)
+    try:
+        return mean_absolute_error(y_train, y_pred)
+    except Exception as e:
+        return np.inf
+
 
 
 if __name__ == "__main__":
@@ -58,7 +65,7 @@ if __name__ == "__main__":
     with multiprocessing.Manager() as manager:
         value_log = manager.dict()  # 在主进程中创建共享日志
         model = GPRegressor(
-            gen_num=20,
+            gen_num=10,
             pop_size=300,
             pset=main_set,
             genetic_operator_pipline=GeneticOperationPipeline,
@@ -66,11 +73,14 @@ if __name__ == "__main__":
             n_jobs=2,
             hof_size=5,
             elitism=True,
-            seed=random.seed(10),
+            seed=10,
             init_mintree_height=2,
             init_maxtree_height=6,
             value_log=value_log,
+            tracker=True
         )
         model.fit(X, y)
         with open("valuelog.pkl", "wb") as f:
             pickle.dump(dict(value_log), f)
+        with open("bsetlog.pkl", "wb") as f:
+            pickle.dump(dict(model.best_function_dict), f)
