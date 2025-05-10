@@ -44,7 +44,7 @@ main_set.addPrimitive(np.multiply, 2)
 main_set.addPrimitive(np.sin, 1)
 main_set.addPrimitive(np.cos, 1)
 main_set.addPrimitive(np.tan, 1)
-main_set.addPrimitive(np.exp,1)
+#main_set.addPrimitive(np.exp,1)
 #main_set.addPrimitive(np.power,2)
 main_set.addTerminal(np.pi)
 main_set.addPrimitive(protected_div, 2, name="div")
@@ -65,7 +65,7 @@ if __name__ == "__main__":
     with multiprocessing.Manager() as manager:
         value_log = manager.dict()  # 在主进程中创建共享日志
         model = GPRegressor(
-            gen_num=10,
+            gen_num=20,
             pop_size=300,
             pset=main_set,
             genetic_operator_pipline=GeneticOperationPipeline,

@@ -9,6 +9,7 @@ import multiprocessing
 from collections import deque
 import threading
 import matplotlib.pyplot as plt
+from typing import Callable
 lock = multiprocessing.Lock()
 
 class GPRegressor(BaseEstimator, RegressorMixin):
@@ -18,7 +19,7 @@ class GPRegressor(BaseEstimator, RegressorMixin):
         pop_size:int=100,
         gen_num:int=20,
         genetic_operator_pipline:__module__=None,
-        fitness_function:function=None,
+        fitness_function:Callable=None,
         fitness_weight:int=-1,        
         parsimony:float=0.000,
         value_log:multiprocessing.managers.DictProxy=None,
@@ -112,27 +113,6 @@ class GPRegressor(BaseEstimator, RegressorMixin):
             max_=self.init_maxtree_height)
         self.toolbox.register("individual", tools.initIterate, creator.Individual, self.toolbox.expr)
         self.toolbox.register("population", tools.initRepeat, list, self.toolbox.individual)
-
-
-    def eval_func(self,ind,X,y):
-        try:
-            # 计算树在X上的输出
-            pred = self.compute_tree(
-                ind, pset=self.pset, x=X, shared_log=self.value_log
-            )
-            # 如果 pred 是一个常数或标量，广播成与 y 相同形状
-            if np.isscalar(pred) or (isinstance(pred, np.ndarray) and pred.size == 1):
-                pred = np.full_like(y, fill_value=float(pred))
-            if callable(self.fitness_function):
-                loss = self.fitness_function(pred, y) # 使用自定义的fitness function进行衡量
-            else:
-                # 用户没有定义的话就默认用MSE函数
-                loss = np.mean((pred - y) ** 2)
-            return (loss + self.parsimony * len(ind) * self.fitness_weight,)
-        except Exception as e:
-            print(ind)
-            raise e
-            return (float("inf"),)
 
     def safe_log_write(self, key, entry):
         """线程安全地写入 shared_log，避免不可序列化对象"""
@@ -256,6 +236,26 @@ class GPRegressor(BaseEstimator, RegressorMixin):
         # 最终返回树的计算结果
         return result
 
+    def eval_func(self,ind,X,y):
+        try:
+            # 计算树在X上的输出
+            pred = self.compute_tree(
+                ind, pset=self.pset, x=X, shared_log=self.value_log
+            )
+            # 如果 pred 是一个常数或标量，广播成与 y 相同形状
+            if np.isscalar(pred) or (isinstance(pred, np.ndarray) and pred.size == 1):
+                pred = np.full_like(y, fill_value=float(pred))
+            if callable(self.fitness_function):
+                loss = self.fitness_function(pred, y) # 使用自定义的fitness function进行衡量
+            else:
+                # 用户没有定义的话就默认用MSE函数
+                loss = np.mean((pred - y) ** 2)
+            return (loss + self.parsimony * len(ind) * self.fitness_weight,)
+        except Exception as e:
+            print(ind)
+            raise e
+            return (float("inf"),)
+
 
     def fit(self, X, y):
         X = np.array(X)
@@ -269,7 +269,8 @@ class GPRegressor(BaseEstimator, RegressorMixin):
         hof = tools.HallOfFame(self.hof_size)
 
         # 初次evaluation
-        fitnesses = self.toolbox.map(self.toolbox.evaluate, pop)
+        with multiprocessing.Pool(processes=self.n_jobs) as pool:
+                fitnesses = pool.map(self.toolbox.evaluate, pop)
         for ind, fit in zip(pop, fitnesses):
             ind.fitness.values = fit
 
