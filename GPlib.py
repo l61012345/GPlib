@@ -10,6 +10,8 @@ from collections import deque
 import threading
 import matplotlib.pyplot as plt
 from typing import Callable
+
+# 始终保持同一个线程锁
 lock = multiprocessing.Lock()
 
 class GPRegressor(BaseEstimator, RegressorMixin):
@@ -372,7 +374,7 @@ class GPRegressor(BaseEstimator, RegressorMixin):
                     if max_func not in self.best_function_dict:
                         # 初始化填 0 直到当前代数
                         self.best_function_dict[max_func] = [0] * g
-                        print(f"新加入 best function: {max_func}")
+                        print(f"New subtree with max count: {max_func}")
 
                     # Step 3: 所有已知函数追加当前 count（即使它不是最大）
                     for func in self.best_function_dict:
@@ -389,11 +391,10 @@ class GPRegressor(BaseEstimator, RegressorMixin):
             plt.xlabel('Generation')
             plt.xticks(np.arange(0, self.gen_num, 1),fontsize=5)
             plt.ylabel('Count')
-            plt.title('Count Progression of Most Subtrees in each generation')
             plt.legend(bbox_to_anchor=(1.05, 1),loc='upper left', fontsize='small')
             plt.grid(True)
             plt.tight_layout()
-            plt.savefig('count_tracker.svg')
+            plt.savefig('count_tracker_result.svg')
             plt.close()
         return self
 
