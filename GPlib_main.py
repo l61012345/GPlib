@@ -64,6 +64,7 @@ if __name__ == "__main__":
     # 创建 Manager 对象，传递给 MIGP 中的共享 log
     with multiprocessing.Manager() as manager:
         value_log = manager.dict()  # 在主进程中创建共享日志
+        lock = manager.Lock()
         model = GPRegressor(
             gen_num=20,
             pop_size=300,
@@ -77,7 +78,8 @@ if __name__ == "__main__":
             init_mintree_height=2,
             init_maxtree_height=6,
             value_log=value_log,
-            tracker=True
+            tracker=True,
+            external_lock=lock
         )
         model.fit(X, y)
         with open("valuelog.pkl", "wb") as f:

@@ -33,6 +33,7 @@ class GPRegressor(BaseEstimator, RegressorMixin):
         seed:int=None,
         n_jobs:int=1,
         verbose:bool=True,
+        external_lock = None
     ):
         """
         pset: PrimitiveSet, use it as DEAP PrimitiveSet \\
@@ -69,6 +70,11 @@ class GPRegressor(BaseEstimator, RegressorMixin):
         self.verbose = verbose
         self.n_jobs = n_jobs
         self.tracker = tracker
+        
+        if external_lock is None:
+            self.lock = lock
+        else:
+            self.lock = external_lock
 
         if pset is None:
             raise ValueError("pset is empty, you must have one.")
@@ -116,29 +122,13 @@ class GPRegressor(BaseEstimator, RegressorMixin):
         self.toolbox.register("individual", tools.initIterate, creator.Individual, self.toolbox.expr)
         self.toolbox.register("population", tools.initRepeat, list, self.toolbox.individual)
 
-    def safe_log_write(self, key, entry):
-        """线程安全地写入 shared_log，避免不可序列化对象"""
-        # 加了个lock来专门更新entry，避免出问题
-        with lock:
-                self.value_log[key] = entry
-
-    def maybe_clean_log(self, max_entry):
-        """按需启动清理线程"""
-        if len(self.value_log) > max_entry * 1.2:
-            cleaner = threading.Thread(
-                target=self.clean_log,
-                args=(max_entry,),
-                daemon=True  # 后台线程，不阻塞主线程退出
-            )
-            cleaner.start()
-
     def clean_log(self, max_entry):
         """保留使用频率最高的 max_entry 项"""
-        with lock:
+        with self.lock:
             if len(self.value_log) <= max_entry:
                 pass
             else:
-                warnings.warn("Clean the log, only keep large count entry")
+                #warnings.warn("Clean the log, only keep large count entry")
                 # 按使用次数排序，保留前 max_entry 项
                 sorted_items = sorted(
                     self.value_log.items(),
@@ -148,13 +138,19 @@ class GPRegressor(BaseEstimator, RegressorMixin):
                 self.value_log.clear()
                 self.value_log.update(dict(sorted_items[:max_entry]))
 
+
+    def safe_log_write(self, key, entry):
+        """线程安全地写入 shared_log，避免不可序列化对象"""
+        # 加了个lock来专门更新entry，避免出问题
+        with self.lock:
+            self.value_log[key] = entry
+
     def decorator(self,func,expr_str):
         def wrapper(*args, **kwargs):
             key = expr_str
             #input_str = '|'.join(map(str, args))
             #key = f"{expr_str}|{input_str}"
-            with lock:
-                key = self.value_log.get(key)
+            with self.lock:
                 if key in self.value_log:
                     # 如果存在，更新 count 值
                     entry = self.value_log[key]
