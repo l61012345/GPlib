@@ -127,19 +127,21 @@ class GPRegressor(BaseEstimator, RegressorMixin):
     def clean_log(self, max_entry):
         """保留使用频率最高的 max_entry 项"""
         with self.lock:
-            if len(self.value_log) <= max_entry:
-                pass
-            else:
-                #warnings.warn("Clean the log, only keep large count entry")
-                # 按使用次数排序，保留前 max_entry 项
-                sorted_items = sorted(
-                    self.value_log.items(),
-                    key=lambda x: x[1].get("count", 0),
-                    reverse=True
-                )
-                self.value_log.clear()
-                self.value_log.update(dict(sorted_items[:max_entry]))
-
+            keys = list(self.value_log.keys())
+            sorted_keys = sorted(keys, key=lambda k: self.value_log[k]['count'], reverse=True)
+            # 分步骤来，防止不稳定
+            new_log = {k: self.value_log[k] for k in sorted_keys[:max_entry]}
+            self.value_log.clear()
+            self.value_log.update(new_log)
+                
+    def maybe_clean_log(self, max_entry):
+        if len(self.value_log) > max_entry * 1.2:
+            cleaner = threading.Thread(
+                target=self.clean_log,
+                args=(max_entry,),
+                daemon=False # 不要再开新线程
+            )
+            cleaner.start()
 
     def safe_log_write(self, key, entry):
         """线程安全地写入 shared_log，避免不可序列化对象"""
