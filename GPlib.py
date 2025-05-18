@@ -75,13 +75,15 @@ class GPRegressor(BaseEstimator, RegressorMixin):
             self.lock = lock
         else:
             self.lock = external_lock
-
+            warnings.warn(
+                "External Lock Detected, external manager.Lock() may slow, plz keep it None.",
+                UserWarning)
         if pset is None:
             raise ValueError("pset is empty, you must have one.")
         # 没有value_log的时候提醒创建一个，不然无法加速
         if value_log is None:
             warnings.warn(
-                "No value_log, use shared_log = manager.dict() to create one",
+                "No value_log, use shared_log = manager.dict() to create one.",
                 UserWarning)
             self.value_log = None
             time.sleep(1)
