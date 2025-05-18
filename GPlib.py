@@ -154,21 +154,20 @@ class GPRegressor(BaseEstimator, RegressorMixin):
             #input_str = '|'.join(map(str, args))
             #key = f"{expr_str}|{input_str}"
             with lock:
-                # 进程锁只锁求值和更新值
                 key = self.value_log.get(key)
-            if key in self.value_log:
-                # 如果存在，更新 count 值
-                entry = self.value_log[key]
-                entry['count'] += 1
-                output = entry['output_value']
-            else:
-                output = func(*args, **kwargs)
-                entry = {
-                    'function': expr_str,
-                    #'input_values': input_str,
-                    'output_value': output,
-                    'count': 1
-                }
+                if key in self.value_log:
+                    # 如果存在，更新 count 值
+                    entry = self.value_log[key]
+                    entry['count'] += 1
+                    output = entry['output_value']
+                else:
+                    output = func(*args, **kwargs)
+                    entry = {
+                        'function': expr_str,
+                        #'input_values': input_str,
+                        'output_value': output,
+                        'count': 1
+                    }
             self.safe_log_write(key, entry)
             return output
         return wrapper
