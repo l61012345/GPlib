@@ -3,9 +3,11 @@ import matplotlib
 
 class GraphTracker:
 
-    def __init__(self, LiveDisplay=True, save_path="gp_training_curve.png"):
+    def __init__(self, LiveDisplay=True, filename="gp_training_curve",dpi=550,format="tiff"):
         self.LiveDisplay = LiveDisplay
-        self.save_path = save_path
+        self.filename = filename
+        self.dpi = dpi
+        self.format = format
 
         # === backend 控制 ===
         if not LiveDisplay:
@@ -120,7 +122,7 @@ class GraphTracker:
         self.fig.tight_layout()
 
         # === 保存图像 ===
-        self.fig.savefig(self.save_path, dpi=150)
+        self.fig.savefig(self.filename, dpi=self.dpi, format=self.format)
 
         # === Live display ===
         if self.LiveDisplay:
