@@ -1,6 +1,7 @@
 __type__ = object
 from collections import defaultdict
 import random
+import warnings
 
 
 def stdcxOnePoint(ind1, ind2,return_indices=False):
@@ -50,3 +51,44 @@ def mutUniform(individual, expr, pset):
     type_ = individual[index].ret
     individual[slice_] = expr(pset=pset, type_=type_)
     return individual,
+
+def del_indiv_attrs(obj, *attr_paths, warn=False):
+    """
+    删除对象上的多个属性。
+
+    支持嵌套路径，如果是嵌套属性只删除最后一层，
+    如 'fitness.values' 只删除 'values'，保留 'fitness' 对象。
+
+    Parameters
+    ----------
+    obj : object
+    attr_paths : str
+        属性路径，如 "fitness.values", "_zero_gate_events"
+    warn : bool, default=False
+        是否在路径不存在时发出 warning（默认关闭，避免污染日志）
+
+    示例：
+        del_indiv_attrs(ind, "fitness.values", "_zero_gate_events")
+    """
+    for path in attr_paths:
+        parts = path.split(".")
+        target = obj
+
+        # 逐层定位
+        for p in parts[:-1]:
+            if not hasattr(target, p):
+                if warn:
+                    warnings.warn(f"[del_indiv_attrs] Path '{path}' not found. Skipping.")
+                target = None
+                break
+            target = getattr(target, p)
+
+        if target is None:
+            continue
+
+        # 删除最后一层
+        if hasattr(target, parts[-1]):
+            delattr(target, parts[-1])
+        else:
+            if warn:
+                warnings.warn(f"[del_indiv_attrs] Attribute '{path}' not found. Skipping.")
