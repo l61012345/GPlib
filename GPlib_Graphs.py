@@ -122,7 +122,7 @@ class GraphTracker:
         self.fig.tight_layout()
 
         # === 保存图像 ===
-        self.fig.savefig(self.filename, dpi=self.dpi, format=self.format)
+        self.fig.savefig(f"{self.filename}.{self.format}", dpi=self.dpi, format=self.format)
 
         # === Live display ===
         if self.LiveDisplay:
