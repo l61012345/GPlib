@@ -1,3 +1,6 @@
+import os
+import pickle
+
 import numpy as np
 import matplotlib
 from matplotlib.ticker import MaxNLocator
@@ -15,7 +18,7 @@ class GraphTracker:
 
         # === backend 控制 ===
         if not LiveDisplay:
-            matplotlib.use("Agg")  # 后台绘图，不弹窗
+            matplotlib.use("Agg", force=True)  # 后台绘图，不弹窗
 
         import matplotlib.pyplot as plt
 
@@ -300,5 +303,355 @@ class GraphTracker:
         self.save_tracker_pkl(self.filename)
 
         # live display
+        if self.LiveDisplay:
+            self.plt.pause(0.01)
+
+
+class AdaptiveGraphTracker:
+    """
+    通用多子图追踪器
+
+    参数
+    ----
+    tracked_layout : list
+        控制子图布局。
+        例如：
+            [
+                ["best_fitness", "mean_fitness"],
+                "mean_size",
+                ["tie_score_mean", "tie_score_var"],
+                "potential_count",
+            ]
+
+        含义：
+        - 第1个子图画 best_fitness 和 mean_fitness
+        - 第2个子图画 mean_size
+        - 第3个子图画 tie_score_mean 和 tie_score_var
+        - 第4个子图画 potential_count
+
+    LiveDisplay : bool
+        是否实时显示
+    filename : str
+        输出文件名前缀（不带后缀）
+    dpi : int
+        保存图片 dpi
+    format : str
+        保存图片格式，如 "tiff" / "png"
+    figsize : tuple | None
+        图尺寸，None 时自动按子图数量调整
+    style_map : dict | None
+        每条曲线的样式映射，例如：
+            {
+                "best_fitness": {"c": "tab:blue", "marker": "o"},
+                "mean_fitness": {"c": "tab:orange", "marker": "x"},
+            }
+    title_map : dict | None
+        子图标题映射。
+        单线可用键："mean_size"
+        多线可用键：("best_fitness", "mean_fitness")
+    ylabel_map : dict | None
+        子图 y 轴标题映射，规则同 title_map
+    fmt_map : dict | None
+        每条曲线数值标签格式，例如：
+            {"potential_count": "{:.0f}", "mean_size": "{:.1f}"}
+    step_map : dict | None
+        每条曲线的标注间隔。
+        若未提供，则自动按点数估计
+    """
+
+    def __init__(
+        self,
+        tracked_layout,
+        *,
+        LiveDisplay=True,
+        filename="adaptive_training_curve",
+        dpi=550,
+        format="tiff",
+        figsize=None,
+        style_map=None,
+        title_map=None,
+        name_map=None,
+        ylabel_map=None,
+        fmt_map=None,
+        step_map=None,
+    ):
+        self.LiveDisplay = LiveDisplay
+        self.filename = filename
+        self.dpi = dpi
+        self.format = format
+
+        if not LiveDisplay:
+            matplotlib.use("Agg",force=True)  # 后台绘图，不弹窗
+
+        import matplotlib.pyplot as plt
+        self.plt = plt
+
+        if self.LiveDisplay:
+            self.plt.ion()
+
+        # 统一把每个 panel 处理成 list[str]
+        self.tracked_layout = [
+            list(item) if isinstance(item, (list, tuple)) else [item]
+            for item in tracked_layout
+        ]
+
+        # 记录代数
+        self.generations = []
+
+        # 为每条曲线准备独立存储
+        self.series = {}
+        for panel in self.tracked_layout:
+            for name in panel:
+                self.series[name] = []
+
+        self.style_map = style_map or {}
+        self.title_map = title_map or {}
+        self.ylabel_map = ylabel_map or {}
+        self.fmt_map = fmt_map or {}
+        self.step_map = step_map or {}
+        self.name_map = name_map or {}
+
+        n_subplots = len(self.tracked_layout)
+        if figsize is None:
+            figsize = (7, max(4, 3.6 * n_subplots))
+
+        self.fig, axes = self.plt.subplots(n_subplots, 1, figsize=figsize)
+        if n_subplots == 1:
+            axes = [axes]
+        self.axes = list(axes)
+
+    # =========================================================
+    # 数据更新
+    # =========================================================
+    def update(self, gen, **tracked_values):
+        """
+        更新一代的数据
+
+        示例
+        ----
+        tracker.update(
+            gen,
+            best_fitness=best_fit,
+            mean_fitness=mean_fit,
+            mean_size=mean_size,
+            tie_score_mean=tie_mean,
+            tie_score_var=tie_var,
+            potential_count=potential_count,
+        )
+        """
+        self.generations.append(gen)
+
+        for name in self.series:
+            value = tracked_values.get(name, np.nan)
+            self.series[name].append(value)
+
+    def update_from_dict(self, gen, stats_dict):
+        """
+        用 dict 更新，便于主循环直接传统计量字典
+        """
+        self.update(gen, **stats_dict)
+
+    # =========================================================
+    # 保存 / 读取
+    # =========================================================
+    def save_tracker_pkl(self, path=None):
+        if path is None:
+            path = self.filename
+        if not path.endswith(".pkl"):
+            path = f"{path}.pkl"
+
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+
+        data = {
+            "generations": self.generations,
+            "tracked_layout": self.tracked_layout,
+            "series": self.series,
+            "filename": self.filename,
+            "dpi": self.dpi,
+            "format": self.format,
+            "style_map": self.style_map,
+            "title_map": self.title_map,
+            "ylabel_map": self.ylabel_map,
+            "fmt_map": self.fmt_map,
+            "step_map": self.step_map,
+            "name_map": self.name_map,
+        }
+
+        with open(path, "wb") as f:
+            pickle.dump(data, f)
+
+    def load_tracker_pkl(self, path):
+        with open(path, "rb") as f:
+            data = pickle.load(f)
+
+        self.generations = data["generations"]
+        self.tracked_layout = data["tracked_layout"]
+        self.series = data["series"]
+
+        self.filename = data.get("filename", self.filename)
+        self.dpi = data.get("dpi", self.dpi)
+        self.format = data.get("format", self.format)
+        self.style_map = data.get("style_map", self.style_map)
+        self.title_map = data.get("title_map", self.title_map)
+        self.ylabel_map = data.get("ylabel_map", self.ylabel_map)
+        self.fmt_map = data.get("fmt_map", self.fmt_map)
+        self.step_map = data.get("step_map", self.step_map)
+        self.name_map = data.get("name_map", self.name_map)
+
+    # =========================================================
+    # 样式 / 标题辅助
+    # =========================================================
+    def _default_style_for_index(self, idx):
+        defaults = [
+            dict(marker="o", markersize=1, c="tab:blue"),
+            dict(marker="x", markersize=1, c="tab:orange"),
+            dict(marker="s", markersize=1, c="tab:green"),
+            dict(marker="^", markersize=1, c="tab:red"),
+            dict(marker="d", markersize=1, c="tab:purple"),
+            dict(marker="v", markersize=1, c="tab:brown"),
+        ]
+        return defaults[idx % len(defaults)].copy()
+
+    def _panel_key(self, names):
+        return tuple(names) if len(names) > 1 else names[0]
+
+    def _panel_title(self, names):
+        key = self._panel_key(names)
+        if key in self.title_map:
+            return self.title_map[key]
+
+        if len(names) == 1:
+            return self.name_map.get(names[0], names[0])
+        return " / ".join(self.name_map.get(n, n) for n in names)
+
+    def _panel_ylabel(self, names):
+        key = self._panel_key(names)
+        if key in self.ylabel_map:
+            return self.ylabel_map[key]
+
+        if len(names) == 1:
+            return self.name_map.get(names[0], names[0])
+        return "Value"
+
+    def _label_fmt(self, name):
+        return self.fmt_map.get(name, "{:.4f}")
+
+    def _label_step(self, name, n_points):
+        if name in self.step_map:
+            return max(1, int(self.step_map[name]))
+        return max(1, int(np.ceil(n_points / 10)))
+
+    # =========================================================
+    # 标注：采用 size 的方案
+    # =========================================================
+    def annotate_sparse_points(
+        self,
+        ax,
+        xs,
+        ys,
+        *,
+        fmt="{:.4f}",
+        fontsize=8,
+        step=None,
+        keep_last=True,
+        xytext=(0, 5),
+    ):
+        """
+        类似原先 size 的标注方式：
+        - 每隔 step 个点标一次
+        - 最后一个点强制标注
+        """
+        n = len(xs)
+        if n == 0:
+            return
+
+        if step is None:
+            step = max(1, n // 12)
+
+        for i, (x, y) in enumerate(zip(xs, ys)):
+            if np.isnan(y):
+                continue
+
+            if i % step != 0 and not (keep_last and i == n - 1):
+                continue
+
+            ax.annotate(
+                fmt.format(y),
+                (x, y),
+                textcoords="offset points",
+                xytext=xytext,
+                ha="center",
+                fontsize=fontsize,
+                bbox=dict(
+                    boxstyle="round,pad=0.2",
+                    fc="white",
+                    ec="none",
+                    alpha=0.8,
+                ),
+            )
+
+    # =========================================================
+    # 绘图
+    # =========================================================
+    def plot(self):
+        n_points = len(self.generations)
+        fontsize = max(6, 8 - n_points // 10)
+
+        for ax in self.axes:
+            ax.clear()
+
+        for panel_idx, (ax, names) in enumerate(zip(self.axes, self.tracked_layout)):
+            ax.yaxis.set_major_locator(MaxNLocator(nbins=6))
+            ax.tick_params(axis="y", pad=6)
+
+            # 先画线
+            for line_idx, name in enumerate(names):
+                xs = self.generations
+                ys = self.series[name]
+
+                style = self._default_style_for_index(line_idx)
+                style.update(self.style_map.get(name, {}))
+                label = self.name_map.get(name, name)
+                ax.plot(xs, ys, label=label, **style)
+
+            # 再做稀疏标注
+            for line_idx, name in enumerate(names):
+                xs = self.generations
+                ys = self.series[name]
+
+                fmt = self._label_fmt(name)
+                step = self._label_step(name, len(xs))
+
+                # 多线时稍微错开，避免标签完全压在一起
+                xytext = (0, 5 + 8 * line_idx)
+
+                self.annotate_sparse_points(
+                    ax,
+                    xs,
+                    ys,
+                    fmt=fmt,
+                    fontsize=fontsize,
+                    step=step,
+                    keep_last=True,
+                    xytext=xytext,
+                )
+
+            ax.legend(fontsize=fontsize, ncol=2)
+            ax.set_title(self._panel_title(names))
+            ax.set_xlabel("Generation")
+            ax.set_ylabel(self._panel_ylabel(names))
+
+        self.fig.tight_layout(rect=[0.12, 0.0, 0.95, 1.0])
+
+        # 保存图片
+        self.fig.savefig(
+            f"{self.filename}.{self.format}",
+            dpi=self.dpi,
+            format=self.format,
+        )
+
+        # 保存数据
+        self.save_tracker_pkl(self.filename)
+
         if self.LiveDisplay:
             self.plt.pause(0.01)
