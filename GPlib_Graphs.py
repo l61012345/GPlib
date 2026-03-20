@@ -51,10 +51,7 @@ class GraphTracker:
         self.mean_fitness.append(np.mean(fits))
         self.mean_size.append(np.mean(sizes))
 
-    def save_fig_pkl(self, path=None):
-        """
-        保存当前 matplotlib figure 为 .pkl（可重新加载并继续编辑）
-        """
+    def save_tracker_pkl(self, path=None):
         import pickle
         import os
 
@@ -66,9 +63,26 @@ class GraphTracker:
 
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
 
-        with open(path, "wb") as f:
-            pickle.dump(self.fig, f)
+        data = {
+            "generations": self.generations,
+            "best_fitness": self.best_fitness,
+            "mean_fitness": self.mean_fitness,
+            "mean_size": self.mean_size,
+        }
 
+        with open(path, "wb") as f:
+            pickle.dump(data, f)
+
+    def load_tracker_pkl(self, path):
+        import pickle
+
+        with open(path, "rb") as f:
+            data = pickle.load(f)
+
+        self.generations = data["generations"]
+        self.best_fitness = data["best_fitness"]
+        self.mean_fitness = data["mean_fitness"]
+        self.mean_size = data["mean_size"]
 
     def annotate_changed_points(self,ax,xs,ys,*,
         fmt="{:.4f}",
@@ -283,7 +297,7 @@ class GraphTracker:
         self.fig.savefig(
             f"{self.filename}.{self.format}", dpi=self.dpi, format=self.format
         )
-        self.save_fig_pkl(self.filename)
+        self.save_tracker_pkl(self.filename)
 
         # live display
         if self.LiveDisplay:
