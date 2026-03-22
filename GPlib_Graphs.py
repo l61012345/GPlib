@@ -18,7 +18,7 @@ class GraphTracker:
 
         # === backend 控制 ===
         if not LiveDisplay:
-            matplotlib.use("Agg", force=True)  # 后台绘图，不弹窗
+            matplotlib.use("Agg")  # 后台绘图，不弹窗
 
         import matplotlib.pyplot as plt
 
@@ -107,7 +107,6 @@ class GraphTracker:
         if not xs or not ys:
             return
 
-        ax.figure.canvas.draw()
         trans = ax.get_yaxis_transform()
 
         if side not in {"left", "right"}:
@@ -122,11 +121,16 @@ class GraphTracker:
 
         # ---------- 1) 轴侧稀疏标签 ----------
         for i, y in enumerate(ys):
-            changed = show_first if i == 0 else (
-                not np.isclose(y, prev_y, atol=atol)
-                if min_delta_to_label is None
-                else abs(y - prev_y) >= min_delta_to_label
-            )
+            if i == 0:
+                changed = show_first
+            else:
+                delta = abs(y - prev_y)
+                not_close = not np.isclose(y, prev_y, atol=atol, rtol=0.0)
+
+                if min_delta_to_label is None:
+                    changed = not_close
+                else:
+                    changed = not_close and (delta >= min_delta_to_label)
 
             if not changed:
                 prev_y = y
@@ -235,26 +239,16 @@ class GraphTracker:
             c="tab:orange",
         )
 
-        self.ax1.yaxis.set_major_locator(MaxNLocator(nbins=6))
         self.ax1.tick_params(axis="y", pad=6)
-        ticks = self.ax1.get_yticks()
-        labels = [f"{t:g}" for t in ticks]
-        if len(labels) > 0:
-            labels[-1] = "" # 去掉最后一个标签，避免和最后一个点的标签重叠
-            labels[-2] = ""
-        self.ax1.set_yticks(ticks)
-        self.ax1.set_yticklabels(labels)
 
         # 左侧：Best
         self.annotate_changed_points(self.ax1, self.generations,self.best_fitness,fmt="{:.4f}",
-            fontsize=fontsize,atol=1e-12,show_first=True,side="left",min_label_gap_px=10,
-            min_delta_to_label=0.0015,keep_last_point_label=True,line_color="tab:blue",
+            fontsize=fontsize,atol=1e-12,show_first=True,side="left",min_label_gap_px=10,keep_last_point_label=True,line_color="tab:blue",
         )
 
         # 右侧：Mean
         self.annotate_changed_points(self.ax1,self.generations,self.mean_fitness,fmt="{:.4f}",
-            fontsize=fontsize,atol=1e-12,show_first=True,side="right",min_label_gap_px=10,
-            min_delta_to_label=0.01,keep_last_point_label=True,line_color="tab:orange",
+            fontsize=fontsize,atol=1e-12,show_first=True,side="right",min_label_gap_px=10,keep_last_point_label=True,line_color="tab:orange",
         )
 
         self.ax1.legend()
@@ -268,10 +262,10 @@ class GraphTracker:
         self.ax2.plot(self.generations, self.mean_size, marker="s", markersize=1)
 
         step = max(1, len(self.generations) // 12)  # 控制大概显示 ~12 个标签
-
         for i, (x, y) in enumerate(zip(self.generations, self.mean_size)):
             if i % step != 0 and i != len(self.generations) - 1:
                 continue
+
             self.ax2.annotate(
                 f"{y:.1f}",
                 (x, y),
@@ -279,18 +273,14 @@ class GraphTracker:
                 xytext=(0, 5),
                 ha="center",
                 fontsize=fontsize,
-                bbox=dict(
-                boxstyle="round,pad=0.2",
-                fc="white",
-                ec="none",
-                alpha=0.8
-    )
             )
+
 
         self.ax2.set_title("Average Tree Size")
         self.ax2.set_xlabel("Generation")
         self.ax2.set_ylabel("Nodes")
-
+        self.ax2.relim()
+        self.ax2.autoscale_view()
         # 给左右标签留空间
         self.fig.subplots_adjust(left=0.18, right=0.82)
 
@@ -381,7 +371,7 @@ class AdaptiveGraphTracker:
         self.format = format
 
         if not LiveDisplay:
-            matplotlib.use("Agg",force=True)  # 后台绘图，不弹窗
+            matplotlib.use("Agg")  # 后台绘图，不弹窗
 
         import matplotlib.pyplot as plt
         self.plt = plt
