@@ -534,12 +534,7 @@ class AdaptiveGraphTracker:
     # =========================================================
     # 标注：采用 size 的方案
     # =========================================================
-    def annotate_sparse_points(
-        self,
-        ax,
-        xs,
-        ys,
-        *,
+    def annotate_sparse_points(self,ax, xs, ys, *,
         fmt="{:.4f}",
         fontsize=8,
         step=None,
@@ -565,19 +560,9 @@ class AdaptiveGraphTracker:
             if i % step != 0 and not (keep_last and i == n - 1):
                 continue
 
-            ax.annotate(
-                fmt.format(y),
-                (x, y),
-                textcoords="offset points",
-                xytext=xytext,
-                ha="center",
-                fontsize=fontsize,
-                bbox=dict(
-                    boxstyle="round,pad=0.2",
-                    fc="white",
-                    ec="none",
-                    alpha=0.8,
-                ),
+            ax.annotate(fmt.format(y),(x, y),textcoords="offset points",
+                xytext=xytext,ha="center",fontsize=fontsize,
+                bbox=dict(boxstyle="round,pad=0.2",fc="white",ec="none",alpha=0.8,),
             )
 
     # =========================================================
@@ -595,8 +580,8 @@ class AdaptiveGraphTracker:
 
             # 先画线
             for line_idx, name in enumerate(names):
-                xs = self.generations
-                ys = self.series[name]
+                xs = np.asarray(self.generations, dtype=float)
+                ys = np.asarray(self.series[name], dtype=float)
                 mask = np.isfinite(xs) & np.isfinite(ys)
 
                 # 如果这一条线完全没有有效数据 → 跳过
@@ -621,15 +606,8 @@ class AdaptiveGraphTracker:
                 # 多线时稍微错开，避免标签完全压在一起
                 xytext = (0, 5 + 8 * line_idx)
 
-                self.annotate_sparse_points(
-                    ax,
-                    xs,
-                    ys,
-                    fmt=fmt,
-                    fontsize=fontsize,
-                    step=step,
-                    keep_last=True,
-                    xytext=xytext,
+                self.annotate_sparse_points(ax,xs,ys,fmt=fmt,
+                    fontsize=fontsize, step=step, keep_last=True,xytext=xytext,
                 )
 
             handles, labels = ax.get_legend_handles_labels()
