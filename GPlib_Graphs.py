@@ -273,6 +273,7 @@ class GraphTracker:
                 xytext=(0, 5),
                 ha="center",
                 fontsize=fontsize,
+                bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="none", alpha=0.8),
             )
 
 
@@ -370,14 +371,13 @@ class AdaptiveGraphTracker:
         self.dpi = dpi
         self.format = format
 
-        if not LiveDisplay:
-            matplotlib.use("Agg")  # 后台绘图，不弹窗
-
         import matplotlib.pyplot as plt
         self.plt = plt
 
         if self.LiveDisplay:
             self.plt.ion()
+        else:
+            self.plt.ioff()
 
         # 统一把每个 panel 处理成 list[str]
         self.tracked_layout = [
@@ -559,7 +559,7 @@ class AdaptiveGraphTracker:
             step = max(1, n // 12)
 
         for i, (x, y) in enumerate(zip(xs, ys)):
-            if np.isnan(y):
+            if not np.isfinite(x) or not np.isfinite(y):
                 continue
 
             if i % step != 0 and not (keep_last and i == n - 1):
@@ -591,13 +591,19 @@ class AdaptiveGraphTracker:
             ax.clear()
 
         for panel_idx, (ax, names) in enumerate(zip(self.axes, self.tracked_layout)):
-            ax.yaxis.set_major_locator(MaxNLocator(nbins=6))
             ax.tick_params(axis="y", pad=6)
 
             # 先画线
             for line_idx, name in enumerate(names):
                 xs = self.generations
                 ys = self.series[name]
+                mask = np.isfinite(xs) & np.isfinite(ys)
+
+                # 如果这一条线完全没有有效数据 → 跳过
+                if not np.any(mask):
+                    continue
+                xs = xs[mask]
+                ys = ys[mask]
 
                 style = self._default_style_for_index(line_idx)
                 style.update(self.style_map.get(name, {}))
@@ -626,7 +632,9 @@ class AdaptiveGraphTracker:
                     xytext=xytext,
                 )
 
-            ax.legend(fontsize=fontsize, ncol=2)
+            handles, labels = ax.get_legend_handles_labels()
+            if handles:
+                ax.legend(fontsize=fontsize, ncol=2)
             ax.set_title(self._panel_title(names))
             ax.set_xlabel("Generation")
             ax.set_ylabel(self._panel_ylabel(names))
