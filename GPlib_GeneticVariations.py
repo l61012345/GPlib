@@ -1,5 +1,6 @@
 __type__ = object
 from collections import defaultdict
+import functools
 import random
 import warnings
 
@@ -92,3 +93,64 @@ def del_indiv_attrs(obj, *attr_paths, warn=False):
         else:
             if warn:
                 warnings.warn(f"[del_indiv_attrs] Attribute '{path}' not found. Skipping.")
+
+def improvement_tracker(eval_func, *, assign_fitness=False):
+    """
+    装饰器：计算遗传变异操作（变异或交叉）前后个体的fitness差值。
+    对于变异，delta = child_fitness - parent_fitness
+    对于返回多个亲本和多个后代的操作，delta = max(child_fitness) - max(parent_fitness)
+    assign_fitness参数控制是否将新计算的fitness值直接赋给后代个体的fitness属性。
+
+    返回:
+        offspring, delta
+    """
+    def decorator(op_func):
+        @functools.wraps(op_func)
+        def wrapper(*parents, **kwargs):
+            # parent fitness
+            parent_fits = [
+                p.fitness.values[0] if p.fitness.valid else None
+                for p in parents
+            ]
+
+            # apply operator
+            offspring = op_func(*parents, **kwargs)
+            if not isinstance(offspring, tuple):
+                raise ValueError(f"{op_func.__name__} must return a tuple")
+
+            # 重新算child fitness
+            child_fits = []
+            for c in offspring:
+                fit = eval_func(c)
+                if assign_fitness:
+                    c.fitness.values = fit
+                if isinstance(fit, tuple) and len(fit) == 1:
+                    fit = fit[0]  # 适应度函数返回单值时，取第一个元素
+                else:
+                    fit_temp = fit
+                    fit = max(fit) if isinstance(fit, tuple) else fit  # 多值时取最大值
+                    warnings.warn(
+                                    f"Got fitness {fit_temp}, expected single-objective tuple. "
+                                    f"Using max(fit)={fit} for tracking ONLY.",
+                                    RuntimeWarning
+                                )
+                child_fits.append(fit)
+
+            # 计算亲本和后代的fitness差
+            if len(parents) == 1 and len(offspring) == 1:
+                # mutation
+                delta = None if parent_fits[0] is None else (child_fits[0] - parent_fits[0])
+
+            elif len(parents) >= 2:
+                # crossover
+                delta = None if any(f is None for f in parent_fits) \
+                    else (max(child_fits) - max(parent_fits))
+
+            else:
+                raise ValueError(
+                    f"Unsupported arity: {len(parents)} parents, {len(offspring)} offspring"
+                )
+
+            return offspring, delta
+        return wrapper
+    return decorator

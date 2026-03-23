@@ -87,6 +87,45 @@ class GraphTracker:
         self.mean_fitness = data["mean_fitness"]
         self.mean_size = data["mean_size"]
 
+    def _normalize_filename(self, filename):
+        if filename is None:
+            return self.filename
+        root, ext = os.path.splitext(filename)
+        if ext == f".{self.format}":
+            return root
+        return filename
+
+    def set_filename(self, filename):
+        """
+        只修改内部 filename，不立即保存。
+        传入带不带图片后缀都可以。
+        """
+        self.filename = self._normalize_filename(filename)
+
+    def save_with_filename(self, filename, remove_old=True):
+        """
+        用新文件名保存，并可选择删除旧文件
+        """
+        old_path = f"{self.filename}.{self.format}"
+
+        # 更新 filename
+        self.set_filename(filename)
+
+        new_path = f"{self.filename}.{self.format}"
+        os.makedirs(os.path.dirname(new_path) or ".", exist_ok=True)
+
+        # 保存新文件
+        self.fig.savefig(new_path, dpi=self.dpi, format=self.format)
+        self.save_tracker_pkl(self.filename)
+
+        # 删除旧文件（避免双文件）
+        if remove_old and os.path.exists(old_path) and old_path != new_path:
+            try:
+                os.remove(old_path)
+                os.remove(old_path.replace(f".{self.format}", ".pkl"))
+            except Exception as e:
+                print(f"[Warning] Failed to remove old file: {old_path}, {e}")
+
     def annotate_changed_points(self,ax,xs,ys,*,
         fmt="{:.4f}",
         fontsize=8,
@@ -487,6 +526,46 @@ class AdaptiveGraphTracker:
         self.fmt_map = data.get("fmt_map", self.fmt_map)
         self.step_map = data.get("step_map", self.step_map)
         self.name_map = data.get("name_map", self.name_map)
+
+
+    def _normalize_filename(self, filename):
+        if filename is None:
+            return self.filename
+        root, ext = os.path.splitext(filename)
+        if ext == f".{self.format}":
+            return root
+        return filename
+
+    def set_filename(self, filename):
+        """
+        只修改内部 filename，不立即保存。
+        传入带不带图片后缀都可以。
+        """
+        self.filename = self._normalize_filename(filename)
+
+    def save_with_filename(self, filename, remove_old=True):
+        """
+        用新文件名保存，并可选择删除旧文件
+        """
+        old_path = f"{self.filename}.{self.format}"
+
+        # 更新 filename
+        self.set_filename(filename)
+
+        new_path = f"{self.filename}.{self.format}"
+        os.makedirs(os.path.dirname(new_path) or ".", exist_ok=True)
+
+        # 保存新文件
+        self.fig.savefig(new_path, dpi=self.dpi, format=self.format)
+        self.save_tracker_pkl(self.filename)
+
+        # 删除旧文件（避免双文件）
+        if remove_old and os.path.exists(old_path) and old_path != new_path:
+            try:
+                os.remove(old_path)
+                os.remove(old_path.replace(f".{self.format}", ".pkl"))
+            except Exception as e:
+                print(f"[Warning] Failed to remove old file: {old_path}, {e}")
 
     # =========================================================
     # 样式 / 标题辅助
