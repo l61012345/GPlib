@@ -4,6 +4,8 @@ import functools
 import random
 import warnings
 
+import numpy as np
+
 
 def stdcxOnePoint(ind1, ind2,return_indices=False):
     # List all available primitive types in each individual
@@ -154,3 +156,21 @@ def improvement_tracker(eval_func, *, assign_fitness=False):
             return offspring, delta
         return wrapper
     return decorator
+
+def save_rng_state():
+    """
+    保存 Python random 和 numpy.random 的当前随机状态。
+    返回一个可直接保存在变量里的状态字典。
+    """
+    return {
+        "python_random_state": random.getstate(),
+        "numpy_random_state": np.random.get_state(),
+    }
+
+
+def restore_rng_state(state):
+    """
+    恢复 Python random 和 numpy.random 的随机状态。
+    """
+    random.setstate(state["python_random_state"])
+    np.random.set_state(state["numpy_random_state"])
