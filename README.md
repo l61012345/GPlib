@@ -450,12 +450,3 @@ Suggested repository citation format:
 
 ---
 
-## License  
-
-## 开源许可证
-
-This project is released under the MIT License.
-
-本项目采用 MIT License 开源。
-
-You may replace this section with another license if required by your institution or project.
