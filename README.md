@@ -83,7 +83,7 @@ Key features:
 主要功能：
 
 - Standard one-point crossover with optional return of selected crossover indices.  
-  标准单点交叉，并可选择返回交叉节点索引。
+  标准单点交叉，并可选择返回交叉节点索引，并且还原根节点可以被选择作为交叉点的状态。
 
 - Uniform subtree mutation.  
   均匀子树变异。
