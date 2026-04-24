@@ -430,23 +430,8 @@ for gen in range(n_generations):
 
 ## 引用
 
-If you use this code in academic work, please cite the associated paper or repository once available.
+If you use this code in academic work,there is no need for you to cite this repository if you don't want to, just give a Star : )
 
-如果你在学术工作中使用本代码，请在相关论文或仓库信息可用后进行引用。
-
-Suggested repository citation format:
-
-建议的仓库引用格式：
-
-```bibtex
-@misc{gplib_utilities,
-  title        = {GPlib Utilities for DEAP Genetic Programming},
-  author       = {Yilin Liu},
-  year         = {2026},
-  howpublished = {\url{https://github.com/l61012345/GPlib}},
-  note         = {Utility modules for cached evaluation, genetic variation, and graph tracking in DEAP-based Genetic Programming}
-}
-```
-
+如果你在学术工作中使用本代码，可以不引用本仓库，给一个Star就行了: )
 ---
 
