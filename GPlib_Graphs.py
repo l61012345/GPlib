@@ -45,8 +45,8 @@ class GraphTracker:
         self.ax2.set_ylabel("Nodes")
 
     def update(self, gen, population):
-
-        fits = [ind.fitness.values[0] for ind in population]
+        # 兼容多fitness的版本
+        fits = [float(np.mean(ind.fitness.values)) for ind in population]
         sizes = [len(ind) for ind in population]
 
         self.generations.append(gen)
@@ -395,7 +395,7 @@ class AdaptiveGraphTracker:
         *,
         LiveDisplay=True,
         filename="adaptive_training_curve",
-        dpi=550,
+        dpi=300,
         format="tiff",
         figsize=None,
         style_map=None,
