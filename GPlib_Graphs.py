@@ -9,12 +9,13 @@ from matplotlib.ticker import MaxNLocator
 class GraphTracker:
 
     def __init__(
-        self, LiveDisplay=True, filename="gp_training_curve", dpi=550, format="tiff"
+        self, LiveDisplay=True, filename="gp_training_curve", dpi=550, format="tiff", save_pkl=False
     ):
         self.LiveDisplay = LiveDisplay
         self.filename = filename
         self.dpi = dpi
         self.format = format
+        self.save_pkl = save_pkl
 
         # === backend 控制 ===
         if not LiveDisplay:
@@ -116,14 +117,19 @@ class GraphTracker:
 
         # 保存新文件
         self.fig.savefig(new_path, dpi=self.dpi, format=self.format)
-        self.save_tracker_pkl(self.filename)
+        if self.save_pkl:
+            self.save_tracker_pkl(self.filename)
 
         # 删除旧文件（避免双文件）
         if remove_old and os.path.exists(old_path) and old_path != new_path:
             try:
                 os.remove(old_path)
-                os.remove(old_path.replace(f".{self.format}", ".pkl"))
-            except Exception as e:
+
+                old_pkl_path = os.path.splitext(old_path)[0] + ".pkl"
+                if os.path.exists(old_pkl_path):
+                    os.remove(old_pkl_path)
+
+            except OSError as e:
                 print(f"[Warning] Failed to remove old file: {old_path}, {e}")
 
     def annotate_changed_points(self,ax,xs,ys,*,
@@ -330,7 +336,8 @@ class GraphTracker:
         self.fig.savefig(
             f"{self.filename}.{self.format}", dpi=self.dpi, format=self.format
         )
-        self.save_tracker_pkl(self.filename)
+        if self.save_pkl:
+            self.save_tracker_pkl(self.filename)
 
         # live display
         if self.LiveDisplay:
@@ -404,11 +411,13 @@ class AdaptiveGraphTracker:
         ylabel_map=None,
         fmt_map=None,
         step_map=None,
+        save_pkl=False,
     ):
         self.LiveDisplay = LiveDisplay
         self.filename = filename
         self.dpi = dpi
         self.format = format
+        self.save_pkl = save_pkl
 
         import matplotlib.pyplot as plt
         self.plt = plt
@@ -557,14 +566,19 @@ class AdaptiveGraphTracker:
 
         # 保存新文件
         self.fig.savefig(new_path, dpi=self.dpi, format=self.format)
-        self.save_tracker_pkl(self.filename)
+        if self.save_pkl:
+            self.save_tracker_pkl(self.filename)
 
         # 删除旧文件（避免双文件）
         if remove_old and os.path.exists(old_path) and old_path != new_path:
             try:
                 os.remove(old_path)
-                os.remove(old_path.replace(f".{self.format}", ".pkl"))
-            except Exception as e:
+
+                old_pkl_path = os.path.splitext(old_path)[0] + ".pkl"
+                if os.path.exists(old_pkl_path):
+                    os.remove(old_pkl_path)
+
+            except OSError as e:
                 print(f"[Warning] Failed to remove old file: {old_path}, {e}")
 
     # =========================================================
@@ -706,7 +720,8 @@ class AdaptiveGraphTracker:
         )
 
         # 保存数据
-        self.save_tracker_pkl(self.filename)
+        if self.save_pkl:
+            self.save_tracker_pkl(self.filename)
 
         if self.LiveDisplay:
             self.plt.pause(0.01)
