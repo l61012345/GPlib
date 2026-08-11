@@ -1,21 +1,86 @@
 import os
 import pickle
+import tempfile
+import time
 
 import numpy as np
 import matplotlib
-from matplotlib.ticker import MaxNLocator
+from matplotlib.ticker import MultipleLocator
+
+
+def _save_figure_atomically(fig, path, *, dpi, image_format, replace_attempts=5):
+    """Write a complete image to a temporary file before exposing ``path``."""
+    output_dir = os.path.dirname(path) or "."
+    os.makedirs(output_dir, exist_ok=True)
+
+    fd, temporary_path = tempfile.mkstemp(
+        prefix=f".{os.path.basename(path)}.",
+        suffix=".tmp",
+        dir=output_dir,
+    )
+    os.close(fd)
+
+    try:
+        fig.savefig(temporary_path, dpi=dpi, format=image_format)
+
+        for attempt in range(replace_attempts):
+            try:
+                os.replace(temporary_path, path)
+                return
+            except OSError:
+                if attempt == replace_attempts - 1:
+                    raise
+                # OneDrive/indexers can briefly hold the destination. Retrying
+                # the final rename avoids reopening or partially writing it.
+                time.sleep(0.1 * (2**attempt))
+    finally:
+        if os.path.exists(temporary_path):
+            try:
+                os.remove(temporary_path)
+            except OSError:
+                pass
+
+
+def _style_generation_axis(ax, ngen):
+    """Label about 10 intervals over the run and draw guides every 10 generations."""
+    label_interval = max(1, int(np.ceil(float(ngen) / 10)))
+    ax.xaxis.set_major_locator(MultipleLocator(label_interval))
+    ax.xaxis.set_minor_locator(MultipleLocator(10))
+    # Keep minor ticks at positions that also have a major tick, so the
+    # 10-generation grid stays independent from the adaptive label interval.
+    ax.xaxis.remove_overlapping_locs = False
+    ax.grid(axis="x", which="major", visible=False)
+    ax.grid(
+        axis="x",
+        which="minor",
+        color="0.75",
+        alpha=0.25,
+        linewidth=0.6,
+    )
+    ax.tick_params(axis="x", which="minor", labelbottom=False, length=0)
+    ax.set_xlim(left=0)
+    ax.set_axisbelow(True)
 
 
 class GraphTracker:
+    '''
+    用于可视化训练过程的类，只会绘图出fitness和树大小的变化图。  
+    - LiveDisplay: 是否实时绘图，开启会影响运行速度
+    - filename: 图像文件名
+    - dpi: 图像分辨率
+    - format: 图像格式
+    - save_pkl: 是否保存pickle文件
+    - ngen: 总训练代数
+    '''
 
-    def __init__(
-        self, LiveDisplay=True, filename="gp_training_curve", dpi=550, format="tiff", save_pkl=False
-    ):
+    def __init__(self, LiveDisplay: bool=True, filename: str="gp_training_curve", dpi: int=550, format: str="png",
+                    save_pkl: bool=False, ngen: int=None):
         self.LiveDisplay = LiveDisplay
         self.filename = filename
         self.dpi = dpi
         self.format = format
         self.save_pkl = save_pkl
+        self.ngen = ngen
 
         # === backend 控制 ===
         if not LiveDisplay:
@@ -297,6 +362,8 @@ class GraphTracker:
         )
 
         self.ax1.legend()
+        planned_ngen = self.ngen if self.ngen is not None else max(self.generations, default=10)
+        _style_generation_axis(self.ax1, planned_ngen)
         self.ax1.set_title("Fitness")
         self.ax1.set_xlabel("Generation")
         self.ax1.set_ylabel("Fitness")
@@ -327,19 +394,16 @@ class GraphTracker:
         self.ax2.set_ylabel("Nodes")
         self.ax2.relim()
         self.ax2.autoscale_view()
+        _style_generation_axis(self.ax2, planned_ngen)
         # 给左右标签留空间
         self.fig.subplots_adjust(left=0.18, right=0.82)
 
         self.fig.tight_layout()
 
-        # 保存
-        self.fig.savefig(
-            f"{self.filename}.{self.format}", dpi=self.dpi, format=self.format
-        )
-        if self.save_pkl:
-            self.save_tracker_pkl(self.filename)
-
-        # live display
+        # plot() only refreshes the in-memory figure.  Persisting the figure here
+        # caused every training update to overwrite the same file, which can race
+        # with file sync/indexing tools such as OneDrive.  The caller performs the
+        # single final write through save_with_filename().
         if self.LiveDisplay:
             self.plt.pause(0.01)
 
@@ -353,71 +417,76 @@ class AdaptiveGraphTracker:
     tracked_layout : list
         控制子图布局。
         例如：
+        ```
             [
                 ["best_fitness", "mean_fitness"],
                 "mean_size",
                 ["tie_score_mean", "tie_score_var"],
                 "potential_count",
             ]
+        ```
 
-        含义：
+        含义：  
         - 第1个子图画 best_fitness 和 mean_fitness
         - 第2个子图画 mean_size
         - 第3个子图画 tie_score_mean 和 tie_score_var
         - 第4个子图画 potential_count
 
-    LiveDisplay : bool
+    - LiveDisplay : bool
         是否实时显示
-    filename : str
+    - filename : str
         输出文件名前缀（不带后缀）
-    dpi : int
+    - dpi : int
         保存图片 dpi
-    format : str
+    - format : str
         保存图片格式，如 "tiff" / "png"
-    figsize : tuple | None
+    - figsize : tuple | None
         图尺寸，None 时自动按子图数量调整
-    style_map : dict | None
+    - style_map : dict | None
         每条曲线的样式映射，例如：
+        ```
             {
                 "best_fitness": {"c": "tab:blue", "marker": "o"},
                 "mean_fitness": {"c": "tab:orange", "marker": "x"},
             }
-    title_map : dict | None
+        ```
+    - title_map : dict | None
         子图标题映射。
-        单线可用键："mean_size"
-        多线可用键：("best_fitness", "mean_fitness")
-    ylabel_map : dict | None
+        单线可用键：`"mean_size"`
+        多线可用键：`("best_fitness", "mean_fitness")`
+    - ylabel_map : dict | None
         子图 y 轴标题映射，规则同 title_map
-    fmt_map : dict | None
+    - fmt_map : dict | None
         每条曲线数值标签格式，例如：
-            {"potential_count": "{:.0f}", "mean_size": "{:.1f}"}
-    step_map : dict | None
-        每条曲线的标注间隔。
-        若未提供，则自动按点数估计
+            `{"potential_count": "{:.0f}", "mean_size": "{:.1f}"}`
+    - step_map : dict | None
+        每条曲线的标注间隔。若未提供，则自动按点数估计
     """
 
     def __init__(
         self,
         tracked_layout,
         *,
-        LiveDisplay=True,
-        filename="adaptive_training_curve",
-        dpi=300,
-        format="tiff",
-        figsize=None,
-        style_map=None,
-        title_map=None,
-        name_map=None,
-        ylabel_map=None,
-        fmt_map=None,
-        step_map=None,
-        save_pkl=False,
+        LiveDisplay:bool=True,
+        filename:str="adaptive_training_curve",
+        dpi:int=300,
+        format:str="tiff",
+        figsize:tuple=None,
+        style_map:dict=None,
+        title_map:dict=None,
+        name_map:dict=None,
+        ylabel_map:dict=None,
+        fmt_map:dict=None,
+        step_map:dict=None,
+        save_pkl:bool=False,
+        ngen:int=None,
     ):
         self.LiveDisplay = LiveDisplay
         self.filename = filename
         self.dpi = dpi
         self.format = format
         self.save_pkl = save_pkl
+        self.ngen = ngen
 
         import matplotlib.pyplot as plt
         self.plt = plt
@@ -463,10 +532,11 @@ class AdaptiveGraphTracker:
     # =========================================================
     def update(self, gen, **tracked_values):
         """
-        更新一代的数据
+        更新一代的数据，此处`tracked_values`需要填写变量名，变量名是注册的字典的键  
 
-        示例
+        示例  
         ----
+        ```
         tracker.update(
             gen,
             best_fitness=best_fit,
@@ -476,6 +546,7 @@ class AdaptiveGraphTracker:
             tie_score_var=tie_var,
             potential_count=potential_count,
         )
+        ```
         """
         self.generations.append(gen)
 
@@ -565,7 +636,12 @@ class AdaptiveGraphTracker:
         os.makedirs(os.path.dirname(new_path) or ".", exist_ok=True)
 
         # 保存新文件
-        self.fig.savefig(new_path, dpi=self.dpi, format=self.format)
+        _save_figure_atomically(
+            self.fig,
+            new_path,
+            dpi=self.dpi,
+            image_format=self.format,
+        )
         if self.save_pkl:
             self.save_tracker_pkl(self.filename)
 
@@ -709,19 +785,13 @@ class AdaptiveGraphTracker:
             ax.set_title(self._panel_title(names))
             ax.set_xlabel("Generation")
             ax.set_ylabel(self._panel_ylabel(names))
+            planned_ngen = self.ngen if self.ngen is not None else max(self.generations, default=10)
+            _style_generation_axis(ax, planned_ngen)
 
         self.fig.tight_layout(rect=[0.12, 0.0, 0.95, 1.0])
 
-        # 保存图片
-        self.fig.savefig(
-            f"{self.filename}.{self.format}",
-            dpi=self.dpi,
-            format=self.format,
-        )
-
-        # 保存数据
-        if self.save_pkl:
-            self.save_tracker_pkl(self.filename)
-
+        # Keep plot updates in memory during training.  save_with_filename() is
+        # the only persistence point, so the image (and optional pickle data) is
+        # written once after training finishes.
         if self.LiveDisplay:
             self.plt.pause(0.01)
