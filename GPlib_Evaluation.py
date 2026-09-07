@@ -4,8 +4,6 @@
 主要是GP的多级缓存evaluation和一个标准的交叉函数
 2026-3-6
 移走标准交叉函数
-2026-7-16
-重构缓存逻辑
 '''
 import numpy as np
 from deap import gp
@@ -83,26 +81,57 @@ class LRUCache:
         return {"cache_size": len(self.cache), "maxsize": self.maxsize}
 
 
+class FIFOCache:
+    """轻量级 FIFO 缓存；读取命中不会改变条目的淘汰顺序。"""
+
+    def __init__(self, maxsize):
+        if maxsize <= 0:
+            raise ValueError("maxsize must be positive")
+        self.maxsize = maxsize
+        self.cache = OrderedDict()
+
+    def __len__(self):
+        return len(self.cache)
+
+    def get_by_key(self, key):
+        return self.cache.get(key, _MISSING)
+
+    def put_by_key(self, key, value):
+        # OrderedDict 对已有 key 赋值时保留其原插入位置，符合 FIFO 语义。
+        self.cache[key] = value
+        if len(self.cache) > self.maxsize:
+            self.cache.popitem(last=False)
+
+    def clear(self):
+        self.cache.clear()
+
+    def info(self):
+        return {"cache_size": len(self.cache), "maxsize": self.maxsize}
+
+
 # 全局变量
 _global_pset = None
 
 # 全局缓存层
 
+_L0_cache = None  # 最小、FIFO
 _L1_cache = None  # 中等、代内级
 _L2_cache = None  # 最大、全局级
 
-def set_cache_pset(pset, L1_size=10000, L2_size=200000):
+def set_cache_pset(pset, L1_size=10000, L2_size=200000, L0_size=2000):
     """
     初始化 PrimitiveSet 与多级缓存。
     ------------------------------------------------
     参数：
     - pset: GP 的 PrimitiveSet
+    - L0_size: L0 FIFO 缓存容量（默认 2000）
     - L1_size: L1 缓存容量（中等）
     - L2_size: L2 缓存容量（较大，全局）
     ------------------------------------------------
     """
-    global _global_pset, _L1_cache, _L2_cache
+    global _global_pset, _L0_cache, _L1_cache, _L2_cache
     _global_pset = pset
+    _L0_cache = FIFOCache(maxsize=L0_size)
     _L1_cache = LRUCache(maxsize=L1_size)
     _L2_cache = LRUCache(maxsize=L2_size)
 
@@ -114,17 +143,23 @@ def clear_cache(level=None):
     ------------------------------------------------
     参数：
     - level=None: 清空全部缓存；
+    - level='L0': 仅清空 L0 缓存；
     - level='L1': 仅清空 L1 缓存；
     - level='L2': 仅清空 L2 缓存。
     ------------------------------------------------
     """
-    global _L1_cache, _L2_cache
+    global _L0_cache, _L1_cache, _L2_cache
 
     if level is None:
+        if _L0_cache is not None:
+            _L0_cache.clear()
         if _L1_cache is not None:
             _L1_cache.clear()
         if _L2_cache is not None:
             _L2_cache.clear()
+    elif level == "L0":
+        if _L0_cache is not None:
+            _L0_cache.clear()
     elif level == "L1":
         if _L1_cache is not None:
             _L1_cache.clear()
@@ -132,7 +167,7 @@ def clear_cache(level=None):
         if _L2_cache is not None:
             _L2_cache.clear()
     else:
-        raise ValueError(f"Invalid cache level '{level}'. Expected one of: None, 'L1', 'L2'.")
+        raise ValueError(f"Invalid cache level '{level}'. Expected one of: None, 'L0', 'L1', 'L2'.")
 
 
 def cache_info(level=None):
@@ -141,6 +176,7 @@ def cache_info(level=None):
     ------------------------------------------------
     参数：
     - level=None: 返回所有缓存状态；
+    - level='L0': 仅返回 L0 缓存信息；
     - level='L1': 仅返回 L1 缓存信息；
     - level='L2': 仅返回 L2 缓存信息。
     ------------------------------------------------
@@ -148,19 +184,22 @@ def cache_info(level=None):
     - dict 类型，包含缓存大小与上限信息。
     ------------------------------------------------
     """
-    global _L1_cache, _L2_cache
+    global _L0_cache, _L1_cache, _L2_cache
 
     if level is None:
         return {
+            "L0": _L0_cache.info() if _L0_cache else {},
             "L1": _L1_cache.info() if _L1_cache else {},
             "L2": _L2_cache.info() if _L2_cache else {},
         }
+    elif level == "L0":
+        return _L0_cache.info() if _L0_cache else {}
     elif level == "L1":
         return _L1_cache.info() if _L1_cache else {}
     elif level == "L2":
         return _L2_cache.info() if _L2_cache else {}
     else:
-        raise ValueError(f"Invalid cache level '{level}'. Expected one of: None, 'L1', 'L2'.")
+        raise ValueError(f"Invalid cache level '{level}'. Expected one of: None, 'L0', 'L1', 'L2'.")
 
 def normalize_node_output(result, n_samples):
     """将节点输出统一为连续的 float ndarray"""
@@ -178,7 +217,7 @@ def compile_tree(expr, pset, x, prefix="ARG", overflow_inf=True,record_all=False
     高性能多级缓存版 GP 表达式计算函数。
     ------------------------------------------------
     特性：
-    - 使用 L1/L2 多级 LRU 缓存（支持 numpy 数组参数）；
+    - 使用 L0 FIFO + L1/L2 LRU 多级缓存（支持 numpy 数组参数）；
     - 每个节点输出只计算一次 result_key，并向父节点传播；
     - 自动清理旧缓存，防止内存膨胀；
     - 无锁、单线程安全；
@@ -196,10 +235,14 @@ def compile_tree(expr, pset, x, prefix="ARG", overflow_inf=True,record_all=False
     ------------------------------------------------
     返回：
     - 该表达式在 x 上的输出值（numpy.ndarray）
+
+    一个固定的 x 对应一套 L0/L1/L2 生命周期。切换训练集、测试集或交叉验证 fold 时，最好清空全局缓存
     """
-    global _global_pset, _L1_cache, _L2_cache
+    global _global_pset, _L0_cache, _L1_cache, _L2_cache
     if _global_pset is None:
         _global_pset = pset
+    if _L0_cache is None:
+        _L0_cache = FIFOCache(maxsize=2000)
     if _L1_cache is None:
         _L1_cache = LRUCache(maxsize=2000)
     if _L2_cache is None:
@@ -232,50 +275,59 @@ def compile_tree(expr, pset, x, prefix="ARG", overflow_inf=True,record_all=False
                 # 不再重新扫描和哈希实际的numpy数组
                 cache_key = (func_name, *arg_keys)
 
-                # === 1. L1 ===
-                cached = _L1_cache.get_by_key(cache_key)
+                # === 1. L0 (FIFO) ===
+                cached = _L0_cache.get_by_key(cache_key)
                 if cached is not _MISSING:
                     result, result_key = cached
                 else:
-                    # === 2. L2 ===
-                    cached = _L2_cache.get_by_key(cache_key)
+                    # === 2. L1 (LRU) ===
+                    cached = _L1_cache.get_by_key(cache_key)
                     if cached is not _MISSING:
                         result, result_key = cached
-                        # L2命中后提升到L1
-                        _L1_cache.put_by_key(cache_key, cached)
+                        # L1 命中后提升到 L0
+                        _L0_cache.put_by_key(cache_key, cached)
                     else:
-                        # === 3. 真计算 ===
-                        computation_succeeded = False
+                        # === 3. L2 (LRU) ===
+                        cached = _L2_cache.get_by_key(cache_key)
+                        if cached is not _MISSING:
+                            result, result_key = cached
+                            # 保持原有 L2 -> L1 提升，并同时填充 L0
+                            _L1_cache.put_by_key(cache_key, cached)
+                            _L0_cache.put_by_key(cache_key, cached)
+                        else:
+                            # === 4. 真计算 ===
+                            computation_succeeded = False
 
-                        try:
-                            result = func(*args)
-                            result = normalize_node_output(result, n_samples)
+                            try:
+                                result = func(*args)
+                                result = normalize_node_output(result, n_samples)
 
-                            # 新输出只在第一次产生时计算一次result_key
-                            result_key = fast_array_key(result)
-                            computation_succeeded = True
+                                # 新输出只在第一次产生时计算一次result_key
+                                result_key = fast_array_key(result)
+                                computation_succeeded = True
 
-                        except OverflowError:
-                            if overflow_inf:
+                            except OverflowError:
+                                if overflow_inf:
+                                    result = np.full(n_samples, np.nan, dtype=float)
+                                    result_key = fast_array_key(result)
+                                    warnings.warn(OverflowError("Overflow happens"))
+                                else:
+                                    # 直接返回第一个参数，同时复用第一个参数的result_key
+                                    result = args[0]
+                                    result_key = arg_keys[0]
+
+                            except Exception as error:
+                                print(f"[ERROR] {error}")
+                                print(f"[ERROR] result: {result}, errorpart: {func_name}")
                                 result = np.full(n_samples, np.nan, dtype=float)
                                 result_key = fast_array_key(result)
-                                warnings.warn(OverflowError("Overflow happens"))
-                            else:
-                                # 直接返回第一个参数，同时复用第一个参数的result_key
-                                result = args[0]
-                                result_key = arg_keys[0]
 
-                        except Exception as error:
-                            print(f"[ERROR] {error}")
-                            print(f"[ERROR] result: {result}, errorpart: {func_name}")
-                            result = np.full(n_samples, np.nan, dtype=float)
-                            result_key = fast_array_key(result)
-
-                        # 只有正常计算完成的结果才写入缓存
-                        if computation_succeeded:
-                            cached = (result, result_key)
-                            _L2_cache.put_by_key(cache_key, cached)
-                            _L1_cache.put_by_key(cache_key, cached)
+                            # 只有正常计算完成的结果才写入缓存
+                            if computation_succeeded:
+                                cached = (result, result_key)
+                                _L2_cache.put_by_key(cache_key, cached)
+                                _L1_cache.put_by_key(cache_key, cached)
+                                _L0_cache.put_by_key(cache_key, cached)
 
             elif isinstance(prim, (gp.Terminal, gp.MetaEphemeral)):
                 func_name = prim.name
@@ -326,5 +378,4 @@ def compile_tree(expr, pset, x, prefix="ARG", overflow_inf=True,record_all=False
             stack[-1][1].append(result)
             stack[-1][2].append(result_key)
     return all_outputs if record_all else result
-
 
