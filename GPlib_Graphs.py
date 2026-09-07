@@ -41,6 +41,40 @@ def _save_figure_atomically(fig, path, *, dpi, image_format, replace_attempts=5)
                 pass
 
 
+def _save_npz_atomically(path, arrays, *, replace_attempts=5):
+    """Write compressed named arrays without exposing a partial NPZ file."""
+    output_dir = os.path.dirname(path) or "."
+    os.makedirs(output_dir, exist_ok=True)
+
+    fd, temporary_path = tempfile.mkstemp(
+        prefix=f".{os.path.basename(path)}.",
+        suffix=".tmp",
+        dir=output_dir,
+    )
+    os.close(fd)
+
+    try:
+        # A file object prevents NumPy from appending another ".npz" suffix to
+        # the temporary filename.
+        with open(temporary_path, "wb") as output:
+            np.savez_compressed(output, **arrays)
+
+        for attempt in range(replace_attempts):
+            try:
+                os.replace(temporary_path, path)
+                return
+            except OSError:
+                if attempt == replace_attempts - 1:
+                    raise
+                time.sleep(0.1 * (2**attempt))
+    finally:
+        if os.path.exists(temporary_path):
+            try:
+                os.remove(temporary_path)
+            except OSError:
+                pass
+
+
 def _style_generation_axis(ax, ngen):
     """Label about 10 intervals over the run and draw guides every 10 generations."""
     label_interval = max(1, int(np.ceil(float(ngen) / 10)))
@@ -68,33 +102,42 @@ class GraphTracker:
     - LiveDisplay: 是否实时绘图，开启会影响运行速度
     - filename: 图像文件名
     - dpi: 图像分辨率
-    - format: 图像格式
+    - format: 图像格式；None 时不创建图，只输出压缩 NPZ 数值文件
     - save_pkl: 是否保存pickle文件
     - ngen: 总训练代数
     '''
 
-    def __init__(self, LiveDisplay: bool=True, filename: str="gp_training_curve", dpi: int=550, format: str="png",
+    def __init__(self, LiveDisplay: bool=True, filename: str="gp_training_curve", dpi: int=550, format: str | None="png",
                     save_pkl: bool=False, ngen: int=None):
-        self.LiveDisplay = LiveDisplay
+        self.LiveDisplay = bool(LiveDisplay and format is not None)
         self.filename = filename
         self.dpi = dpi
         self.format = format
         self.save_pkl = save_pkl
         self.ngen = ngen
 
-        # === backend 控制 ===
-        if not LiveDisplay:
-            matplotlib.use("Agg")  # 后台绘图，不弹窗
-
-        import matplotlib.pyplot as plt
-
-        self.plt = plt
-
         # === 数据记录 ===
         self.generations = []
         self.best_fitness = []
         self.mean_fitness = []
         self.mean_size = []
+
+        # format=None 是批量实验的数据模式。此时不创建 figure，plot()
+        # 保持可调用但成为 no-op，最终由 save_with_filename() 写 NPZ。
+        self.plt = None
+        self.fig = None
+        self.ax1 = None
+        self.ax2 = None
+        if self.format is None:
+            return
+
+        # === backend 控制 ===
+        if not self.LiveDisplay:
+            matplotlib.use("Agg")  # 后台绘图，不弹窗
+
+        import matplotlib.pyplot as plt
+
+        self.plt = plt
 
         # === 图像初始化 ===
         if self.LiveDisplay:
@@ -153,11 +196,27 @@ class GraphTracker:
         self.mean_fitness = data["mean_fitness"]
         self.mean_size = data["mean_size"]
 
+    def save_tracker_npz(self, path=None):
+        """Save the per-generation numeric history as compressed named arrays."""
+        if path is None:
+            path = self.filename
+        if not path.endswith(".npz"):
+            path = f"{path}.npz"
+
+        arrays = {
+            "generations": np.asarray(self.generations, dtype=np.int64),
+            "best_fitness": np.asarray(self.best_fitness, dtype=np.float64),
+            "mean_fitness": np.asarray(self.mean_fitness, dtype=np.float64),
+            "mean_size": np.asarray(self.mean_size, dtype=np.float64),
+        }
+        _save_npz_atomically(path, arrays)
+
     def _normalize_filename(self, filename):
         if filename is None:
             return self.filename
         root, ext = os.path.splitext(filename)
-        if ext == f".{self.format}":
+        expected_ext = ".npz" if self.format is None else f".{self.format}"
+        if ext.lower() == expected_ext.lower():
             return root
         return filename
 
@@ -170,29 +229,40 @@ class GraphTracker:
 
     def save_with_filename(self, filename, remove_old=True):
         """
-        用新文件名保存，并可选择删除旧文件
+        用新文件名保存，并可选择删除旧文件。
+
+        format=None 时仅保存压缩 NPZ；其他格式维持原图像与可选 PKL 行为。
         """
-        old_path = f"{self.filename}.{self.format}"
+        extension = "npz" if self.format is None else self.format
+        old_path = f"{self.filename}.{extension}"
 
         # 更新 filename
         self.set_filename(filename)
 
-        new_path = f"{self.filename}.{self.format}"
+        new_path = f"{self.filename}.{extension}"
         os.makedirs(os.path.dirname(new_path) or ".", exist_ok=True)
 
-        # 保存新文件
-        self.fig.savefig(new_path, dpi=self.dpi, format=self.format)
-        if self.save_pkl:
-            self.save_tracker_pkl(self.filename)
+        if self.format is None:
+            self.save_tracker_npz(new_path)
+        else:
+            _save_figure_atomically(
+                self.fig,
+                new_path,
+                dpi=self.dpi,
+                image_format=self.format,
+            )
+            if self.save_pkl:
+                self.save_tracker_pkl(self.filename)
 
         # 删除旧文件（避免双文件）
         if remove_old and os.path.exists(old_path) and old_path != new_path:
             try:
                 os.remove(old_path)
 
-                old_pkl_path = os.path.splitext(old_path)[0] + ".pkl"
-                if os.path.exists(old_pkl_path):
-                    os.remove(old_pkl_path)
+                if self.format is not None:
+                    old_pkl_path = os.path.splitext(old_path)[0] + ".pkl"
+                    if os.path.exists(old_pkl_path):
+                        os.remove(old_pkl_path)
 
             except OSError as e:
                 print(f"[Warning] Failed to remove old file: {old_path}, {e}")
@@ -321,6 +391,9 @@ class GraphTracker:
         ax._last_endpoint_labels.append({"x": x_last, "y": y_last, "dx": dx, "dy": dy})
 
     def plot(self):
+        if self.format is None:
+            return
+
         n_points = len(self.generations)
         fontsize = max(6, 8 - n_points // 10)
 
@@ -470,7 +543,7 @@ class AdaptiveGraphTracker:
         LiveDisplay:bool=True,
         filename:str="adaptive_training_curve",
         dpi:int=300,
-        format:str="tiff",
+        format:str | None="png",
         figsize:tuple=None,
         style_map:dict=None,
         title_map:dict=None,
@@ -481,20 +554,12 @@ class AdaptiveGraphTracker:
         save_pkl:bool=False,
         ngen:int=None,
     ):
-        self.LiveDisplay = LiveDisplay
+        self.LiveDisplay = bool(LiveDisplay and format is not None)
         self.filename = filename
         self.dpi = dpi
         self.format = format
         self.save_pkl = save_pkl
         self.ngen = ngen
-
-        import matplotlib.pyplot as plt
-        self.plt = plt
-
-        if self.LiveDisplay:
-            self.plt.ion()
-        else:
-            self.plt.ioff()
 
         # 统一把每个 panel 处理成 list[str]
         self.tracked_layout = [
@@ -517,6 +582,20 @@ class AdaptiveGraphTracker:
         self.fmt_map = fmt_map or {}
         self.step_map = step_map or {}
         self.name_map = name_map or {}
+
+        self.plt = None
+        self.fig = None
+        self.axes = []
+        if self.format is None:
+            return
+
+        import matplotlib.pyplot as plt
+        self.plt = plt
+
+        if self.LiveDisplay:
+            self.plt.ion()
+        else:
+            self.plt.ioff()
 
         n_subplots = len(self.tracked_layout)
         if figsize is None:
@@ -607,12 +686,27 @@ class AdaptiveGraphTracker:
         self.step_map = data.get("step_map", self.step_map)
         self.name_map = data.get("name_map", self.name_map)
 
+    def save_tracker_npz(self, path=None):
+        """Save all registered per-generation series as compressed named arrays."""
+        if path is None:
+            path = self.filename
+        if not path.endswith(".npz"):
+            path = f"{path}.npz"
+
+        arrays = {"generations": np.asarray(self.generations, dtype=np.int64)}
+        arrays.update(
+            (name, np.asarray(values, dtype=np.float64))
+            for name, values in self.series.items()
+        )
+        _save_npz_atomically(path, arrays)
+
 
     def _normalize_filename(self, filename):
         if filename is None:
             return self.filename
         root, ext = os.path.splitext(filename)
-        if ext == f".{self.format}":
+        expected_ext = ".npz" if self.format is None else f".{self.format}"
+        if ext.lower() == expected_ext.lower():
             return root
         return filename
 
@@ -625,34 +719,40 @@ class AdaptiveGraphTracker:
 
     def save_with_filename(self, filename, remove_old=True):
         """
-        用新文件名保存，并可选择删除旧文件
+        用新文件名保存，并可选择删除旧文件。
+
+        format=None 时仅保存压缩 NPZ；其他格式维持原图像与可选 PKL 行为。
         """
-        old_path = f"{self.filename}.{self.format}"
+        extension = "npz" if self.format is None else self.format
+        old_path = f"{self.filename}.{extension}"
 
         # 更新 filename
         self.set_filename(filename)
 
-        new_path = f"{self.filename}.{self.format}"
+        new_path = f"{self.filename}.{extension}"
         os.makedirs(os.path.dirname(new_path) or ".", exist_ok=True)
 
-        # 保存新文件
-        _save_figure_atomically(
-            self.fig,
-            new_path,
-            dpi=self.dpi,
-            image_format=self.format,
-        )
-        if self.save_pkl:
-            self.save_tracker_pkl(self.filename)
+        if self.format is None:
+            self.save_tracker_npz(new_path)
+        else:
+            _save_figure_atomically(
+                self.fig,
+                new_path,
+                dpi=self.dpi,
+                image_format=self.format,
+            )
+            if self.save_pkl:
+                self.save_tracker_pkl(self.filename)
 
         # 删除旧文件（避免双文件）
         if remove_old and os.path.exists(old_path) and old_path != new_path:
             try:
                 os.remove(old_path)
 
-                old_pkl_path = os.path.splitext(old_path)[0] + ".pkl"
-                if os.path.exists(old_pkl_path):
-                    os.remove(old_pkl_path)
+                if self.format is not None:
+                    old_pkl_path = os.path.splitext(old_path)[0] + ".pkl"
+                    if os.path.exists(old_pkl_path):
+                        os.remove(old_pkl_path)
 
             except OSError as e:
                 print(f"[Warning] Failed to remove old file: {old_path}, {e}")
@@ -738,6 +838,9 @@ class AdaptiveGraphTracker:
     # 绘图
     # =========================================================
     def plot(self):
+        if self.format is None:
+            return
+
         n_points = len(self.generations)
         fontsize = max(6, 8 - n_points // 10)
 
