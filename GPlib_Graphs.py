@@ -2,6 +2,7 @@ import os
 import pickle
 import tempfile
 import time
+from numbers import Integral
 
 import numpy as np
 import matplotlib
@@ -96,6 +97,32 @@ def _style_generation_axis(ax, ngen):
     ax.set_axisbelow(True)
 
 
+def _resolve_subplot_shape(n_panels, subplot_shape):
+    """Return a validated ``(nrows, ncols)`` layout for *n_panels*."""
+    if subplot_shape is None:
+        return n_panels, 1
+
+    if not isinstance(subplot_shape, (tuple, list)) or len(subplot_shape) != 2:
+        raise ValueError("subplot_shape must be a (nrows, ncols) pair")
+
+    nrows, ncols = subplot_shape
+    if (
+        isinstance(nrows, bool)
+        or isinstance(ncols, bool)
+        or not isinstance(nrows, Integral)
+        or not isinstance(ncols, Integral)
+        or nrows <= 0
+        or ncols <= 0
+    ):
+        raise ValueError("subplot_shape rows and columns must be positive integers")
+    if nrows * ncols < n_panels:
+        raise ValueError(
+            f"subplot_shape {tuple(subplot_shape)} has room for {nrows * ncols} "
+            f"panels, but {n_panels} are required"
+        )
+    return int(nrows), int(ncols)
+
+
 class GraphTracker:
     '''
     用于可视化训练过程的类，只会绘图出fitness和树大小的变化图。  
@@ -105,16 +132,20 @@ class GraphTracker:
     - format: 图像格式；None 时不创建图，只输出压缩 NPZ 数值文件
     - save_pkl: 是否保存pickle文件
     - ngen: 总训练代数
+    - subplot_shape: 可选的 (行数, 列数)；默认保持 2 x 1 单列布局
+    - figsize: 可选的整张图尺寸；默认根据子图布局自动计算
     '''
 
     def __init__(self, LiveDisplay: bool=True, filename: str="gp_training_curve", dpi: int=550, format: str | None="png",
-                    save_pkl: bool=False, ngen: int=None):
+                    save_pkl: bool=False, ngen: int=None, subplot_shape=None, figsize:tuple=None):
         self.LiveDisplay = bool(LiveDisplay and format is not None)
         self.filename = filename
         self.dpi = dpi
         self.format = format
         self.save_pkl = save_pkl
         self.ngen = ngen
+        self.subplot_shape = _resolve_subplot_shape(2, subplot_shape)
+        self.figsize = figsize
 
         # === 数据记录 ===
         self.generations = []
@@ -143,7 +174,19 @@ class GraphTracker:
         if self.LiveDisplay:
             self.plt.ion()
 
-        self.fig, (self.ax1, self.ax2) = self.plt.subplots(2, 1, figsize=(7, 8))
+        nrows, ncols = self.subplot_shape
+        if self.figsize is None:
+            self.figsize = (7 * ncols, 4 * nrows)
+        self.fig, axes = self.plt.subplots(
+            nrows,
+            ncols,
+            figsize=self.figsize,
+            squeeze=False,
+        )
+        flat_axes = axes.ravel()
+        self.ax1, self.ax2 = flat_axes[:2]
+        for unused_ax in flat_axes[2:]:
+            unused_ax.set_visible(False)
 
         self.ax1.set_title("Fitness")
         self.ax1.set_xlabel("Generation")
@@ -515,6 +558,9 @@ class AdaptiveGraphTracker:
         保存图片格式，如 "tiff" / "png"
     - figsize : tuple | None
         图尺寸，None 时自动按子图数量调整
+    - subplot_shape : tuple | None
+        可选的 ``(行数, 列数)``。None 时保持原有的 N x 1 单列布局；
+        容量可以大于子图数量，多余位置会自动隐藏
     - style_map : dict | None
         每条曲线的样式映射，例如：
         ```
@@ -553,6 +599,7 @@ class AdaptiveGraphTracker:
         step_map:dict=None,
         save_pkl:bool=False,
         ngen:int=None,
+        subplot_shape=None,
     ):
         self.LiveDisplay = bool(LiveDisplay and format is not None)
         self.filename = filename
@@ -566,6 +613,9 @@ class AdaptiveGraphTracker:
             list(item) if isinstance(item, (list, tuple)) else [item]
             for item in tracked_layout
         ]
+        self.subplot_shape = _resolve_subplot_shape(
+            len(self.tracked_layout), subplot_shape
+        )
 
         # 记录代数
         self.generations = []
@@ -598,13 +648,20 @@ class AdaptiveGraphTracker:
             self.plt.ioff()
 
         n_subplots = len(self.tracked_layout)
+        nrows, ncols = self.subplot_shape
         if figsize is None:
-            figsize = (7, max(4, 3.6 * n_subplots))
+            figsize = (7 * ncols, max(4, 3.6 * nrows))
 
-        self.fig, axes = self.plt.subplots(n_subplots, 1, figsize=figsize)
-        if n_subplots == 1:
-            axes = [axes]
-        self.axes = list(axes)
+        self.fig, axes = self.plt.subplots(
+            nrows,
+            ncols,
+            figsize=figsize,
+            squeeze=False,
+        )
+        flat_axes = axes.ravel()
+        self.axes = list(flat_axes[:n_subplots])
+        for unused_ax in flat_axes[n_subplots:]:
+            unused_ax.set_visible(False)
 
     # =========================================================
     # 数据更新
