@@ -524,6 +524,44 @@ class GraphTracker:
             self.plt.pause(0.01)
 
 
+class FitnessValidationGraphTracker(GraphTracker):
+    """Track training fitness and held-out scores of training-selected winners.
+
+    validation_evaluator returns (rmse, score); training_score ranks individuals.
+    test_fitness_history is retained by reference for checkpoint persistence.
+    """
+
+    def __init__(self, *args, validation_evaluator, training_score,
+                 test_fitness_history=None, **kwargs):
+        self.validation_evaluator = validation_evaluator
+        self.training_score = training_score
+        self.test_fitness_history = (
+            {} if test_fitness_history is None else test_fitness_history
+        )
+        super().__init__(*args, **kwargs)
+
+    def update(self, gen, population):
+        best = max(population, key=self.training_score)
+        self.test_fitness_history[int(gen)] = self.validation_evaluator(best)[1]
+        super().update(gen, population)
+
+    def save_tracker_npz(self, path=None):
+        path = self.filename if path is None else path
+        if not path.endswith(".npz"):
+            path += ".npz"
+        arrays = {
+            "generations": np.asarray(self.generations, dtype=np.int64),
+            "best_fitness": np.asarray(self.best_fitness, dtype=np.float64),
+            "mean_fitness": np.asarray(self.mean_fitness, dtype=np.float64),
+            "mean_size": np.asarray(self.mean_size, dtype=np.float64),
+            "test_fitness": np.asarray([
+                self.test_fitness_history.get(int(gen), np.nan)
+                for gen in self.generations
+            ], dtype=np.float64),
+        }
+        _save_npz_atomically(path, arrays)
+
+
 class AdaptiveGraphTracker:
     """
     通用多子图追踪器
